@@ -1,0 +1,27 @@
+export const DEFAULTS = {
+  width: 50,
+  height: 150,
+  thickness: 1,
+  cornerRadius: 5,
+  holeEnabled: true,
+  holeDiameter: 4,
+  holeTopOffset: 5,
+  holeX: 0,
+  baseColor: '#FFFFFF',
+} as const
+
+export const LIMITS = {
+  minWidth: 10,
+  maxWidth: 400,
+  minHeight: 20,
+  maxHeight: 500,
+  minThickness: 0.4,
+  maxThickness: 10,
+  maxCornerRadiusRatio: 0.5,
+  minHoleDiameter: 1,
+  minWall: 1,
+  minTopOffset: 0.5,
+  maxDepthOverThicknessTolerance: 0.001,
+  minDesignScale: 0.05,
+  maxDesignScale: 20,
+} as const

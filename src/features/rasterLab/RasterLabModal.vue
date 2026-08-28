@@ -10,6 +10,7 @@ import FilterBar from './components/FilterBar.vue'
 import ParamPanel from './components/ParamPanel.vue'
 import CleanToolbar from './components/CleanToolbar.vue'
 import ImageCropper from './components/ImageCropper.vue'
+import BrushCanvas from './components/BrushCanvas.vue'
 import { PRESETS, DEFAULT_PARAMS } from './engine/presets'
 import { traceImageToSvg, loadImageData } from './engine/tracerPipeline'
 import { SvgCleanEngine } from './engine/svgCleanEngine'
@@ -34,6 +35,7 @@ const cleanEngine = new SvgCleanEngine()
 const cleanSvg = ref<string | null>(null)
 const tool = ref<CleanTool>('delete')
 const selectedColor = ref('#ff0000')
+const brushSize = ref(3)
 const canUndo = ref(false)
 const canRedo = ref(false)
 const showClean = ref(false)
@@ -337,6 +339,16 @@ function onSvgClick(segmentId: string) {
   if (next) {
     cleanSvg.value = next
     svgString.value = next // mantener sincronizado para preview
+    updateCanUndoRedo()
+  }
+}
+
+function onBrushStroke(pathData: string) {
+  if (!cleanSvg.value) return
+  const next = cleanEngine.addBrushStroke(pathData, selectedColor.value, brushSize.value)
+  if (next) {
+    cleanSvg.value = next
+    svgString.value = next
     updateCanUndoRedo()
   }
 }
@@ -695,16 +707,25 @@ function onFramePaddingChange(p: number) {
             :can-undo="canUndo"
             :can-redo="canRedo"
             :selected-color="selectedColor"
+            :brush-size="brushSize"
             @update:tool="(v) => (tool = v)"
             @undo="onUndo"
             @redo="onRedo"
             @update:selectedColor="(v) => (selectedColor = v)"
+            @update:brushSize="(v) => (brushSize = v)"
             @clear="() => { const resetSvg = cleanEngine.reset(); cleanSvg = resetSvg; svgString = resetSvg; updateCanUndoRedo() }"
           />
 
-          <div class="rasterlab__cleanCanvas" :style="cleanPreviewBoxStyle" @click="onCleanCanvasClick">
+          <div class="rasterlab__cleanCanvas" :style="cleanPreviewBoxStyle" @click="tool !== 'brush' ? onCleanCanvasClick($event) : undefined">
             <div v-if="cleanSvg" v-html="cleanSvg" class="rasterlab__cleanSvg" :style="{ transform: `scale(${cleanZoom})` }"></div>
             <span v-else class="preview__placeholder">Sin SVG</span>
+            <BrushCanvas
+              v-if="tool === 'brush'"
+              :color="selectedColor"
+              :stroke-width="brushSize"
+              :zoom="cleanZoom"
+              @stroke-complete="onBrushStroke"
+            />
           </div>
           <div class="rasterlab__zoombar">
             <button class="preview__zoomBtn" @click="cleanZoom = Math.max(0.2, cleanZoom - 0.2)">−</button>
@@ -767,7 +788,7 @@ function onFramePaddingChange(p: number) {
 .rasterlab__singleSvg :deep(svg) { width: 100%; height: auto; max-height: 520px; max-width: 100%; }
 .rasterlab__cleanHead { display: flex; justify-content: flex-start; align-items: center; gap: 0.5rem; }
 .rasterlab__subtitle { margin: 0; font-size: 0.8rem; color: var(--accent-primary); text-transform: uppercase; letter-spacing: 0.06em; }
-.rasterlab__cleanCanvas { min-height: 380px; height: clamp(400px, 58vh, 620px); max-height: 68vh; overflow: auto; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-preview); display: flex; align-items: center; justify-content: center; padding: 0.8rem; }
+.rasterlab__cleanCanvas { min-height: 380px; height: clamp(400px, 58vh, 620px); max-height: 68vh; overflow: auto; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-preview); display: flex; align-items: center; justify-content: center; padding: 0.8rem; position: relative; }
 .rasterlab__cleanSvg { width: 100%; max-width: 560px; max-height: 560px; transform-origin: center; transition: transform 0.15s; display: flex; align-items: center; justify-content: center; }
 .rasterlab__cleanSvg :deep(svg) { width: 100%; height: auto; max-height: 560px; max-width: 100%; }
 .rasterlab__cleanSvg :deep([id^="seg-"]) { cursor: pointer; }

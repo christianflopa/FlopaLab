@@ -25,7 +25,7 @@ export interface RasterLabState {
   isProcessing: boolean
 }
 
-export type CleanTool = 'select' | 'delete' | 'paint'
+export type CleanTool = 'select' | 'delete' | 'paint' | 'brush'
 
 export interface CleanSegment {
   id: string

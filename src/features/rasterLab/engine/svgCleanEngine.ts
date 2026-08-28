@@ -89,4 +89,27 @@ export class SvgCleanEngine {
     this.redoStack = []
     return this.currentSvg
   }
+
+  // Agrega un trazo de pincel como nuevo path SVG
+  addBrushStroke(pathData: string, color: string, strokeWidth: number): string {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(this.currentSvg, 'image/svg+xml')
+    const svgEl = doc.documentElement
+    
+    // Crear nuevo path para el trazo del pincel
+    const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', pathData)
+    path.setAttribute('fill', 'none')
+    path.setAttribute('stroke', color)
+    path.setAttribute('stroke-width', strokeWidth.toString())
+    path.setAttribute('stroke-linecap', 'round')
+    path.setAttribute('stroke-linejoin', 'round')
+    path.setAttribute('id', `brush-${Date.now()}`)
+    
+    svgEl.appendChild(path)
+    
+    const next = new XMLSerializer().serializeToString(doc.documentElement)
+    this.pushHistory(next)
+    return next
+  }
 }

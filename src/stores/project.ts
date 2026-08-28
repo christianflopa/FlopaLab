@@ -3,11 +3,11 @@ import type { BaseObject } from '../models/BaseObject'
 import { clampBaseValues, createDefaultBaseObject } from '../models/BaseObject'
 import type { SvgDesign } from '../models/SvgDesign'
 import type { ParsedSvg } from '../models/ParsedSvg'
-import { LIMITS } from '../engine/constants'
+import { DEFAULTS, LIMITS } from '../engine/constants'
 import {
   invalidateDesignGeometries,
 } from '../engine/geometry/designGeometry'
-import { removeParsedSvg } from '../engine/svg/svgCache'
+import { removeParsedSvg, setParsedSvg } from '../engine/svg/svgCache'
 
 const EPSILON = 1e-6
 const MIN_DEPTH = 0.1
@@ -15,7 +15,7 @@ const FIT_MARGIN_RATIO = 0.92
 
 export type StatusKind = 'info' | 'error' | 'success'
 
-export type TransformMode = 'translate' | 'rotate' | 'scale'
+export type TransformMode = 'translate' | 'rotate' | 'scale' | 'hole'
 
 export interface ViewRequest {
   view: 'face' | 'profile' | 'reset'
@@ -28,6 +28,7 @@ interface ProjectState {
   selectedDesignId: string | null
   previewMode: boolean
   transformMode: TransformMode
+  holeDragMode: boolean
   statusMessage: string
   statusKind: StatusKind
   viewRequest: ViewRequest
@@ -51,6 +52,7 @@ export const useProjectStore = defineStore('project', {
     selectedDesignId: null,
     previewMode: false,
     transformMode: 'translate',
+    holeDragMode: false,
     statusMessage: '',
     statusKind: 'info',
     viewRequest: { view: 'reset', nonce: 0 },
@@ -87,9 +89,37 @@ export const useProjectStore = defineStore('project', {
 
     setTransformMode(mode: TransformMode) {
       this.transformMode = mode
+      if (mode === 'hole') this.holeDragMode = true
+      else this.holeDragMode = false
+    },
+
+    setHoleDragMode(enabled: boolean) {
+      this.holeDragMode = enabled
+      if (enabled) {
+        this.transformMode = 'hole'
+        this.selectedDesignId = null
+      } else if (this.transformMode === 'hole') {
+        this.transformMode = 'translate'
+      }
     },
 
     updateBase(patch: Partial<BaseObject>) {
+      // Si es base SVG y se cambia width o height, mantener proporción
+      if (this.base.kind === 'svg' && this.base.svgBaseId && this.base.svgBaseAspect && this.base.svgBaseInitialSize) {
+        const hasW = patch.width !== undefined
+        const hasH = patch.height !== undefined
+        if (hasW && !hasH) {
+          const s = patch.width! / this.base.svgBaseInitialSize.w
+          patch.height = this.base.svgBaseInitialSize.h * s
+        } else if (!hasW && hasH) {
+          const s = patch.height! / this.base.svgBaseInitialSize.h
+          patch.width = this.base.svgBaseInitialSize.w * s
+        } else if (hasW && hasH) {
+          const s = Math.min(patch.width! / this.base.svgBaseInitialSize.w, patch.height! / this.base.svgBaseInitialSize.h)
+          patch.width = this.base.svgBaseInitialSize.w * s
+          patch.height = this.base.svgBaseInitialSize.h * s
+        }
+      }
       this.base = clampBaseValues({ ...this.base, ...patch })
 
       let depthClamped = false
@@ -102,6 +132,56 @@ export const useProjectStore = defineStore('project', {
       if (depthClamped) {
         this.setStatus('La profundidad de algunos diseños se ajustó al nuevo grosor.', 'info')
       }
+    },
+
+    setBaseFromSvg(_svgText: string, parsed: ParsedSvg) {
+      const id = `base-svg-${Date.now().toString(36)}`
+      setParsedSvg(id, parsed)
+      const aspect = parsed.width / parsed.height
+      // Lado más grande → 150mm, el otro proporcional (mantiene proporción, no deforma)
+      const scale = 150 / Math.max(parsed.width, parsed.height)
+      const rawW = parsed.width * scale
+      const rawH = parsed.height * scale
+      // Clampar a límites manteniendo proporción cuando sea necesario:
+      // si el lado corto queda fuera de rango, re-escalar uniformemente para que quepa.
+      let outW = rawW
+      let outH = rawH
+      const minScaleForLimits = Math.max(LIMITS.minWidth / rawW, LIMITS.minHeight / rawH)
+      const maxScaleForLimits = Math.min(LIMITS.maxWidth / rawW, LIMITS.maxHeight / rawH)
+      if (minScaleForLimits > 1) {
+        // too small -> grow uniformly to fit min
+        outW = rawW * minScaleForLimits
+        outH = rawH * minScaleForLimits
+      } else if (maxScaleForLimits < 1) {
+        // too big -> shrink uniformly to fit max
+        outW = rawW * maxScaleForLimits
+        outH = rawH * maxScaleForLimits
+      }
+      this.base = clampBaseValues({
+        ...this.base,
+        kind: 'svg',
+        width: outW,
+        height: outH,
+        thickness: 1,
+        svgBaseId: id,
+        svgBaseAspect: aspect,
+        svgBaseInitialSize: { w: outW, h: outH },
+      })
+      this.setStatus(`Base SVG cargada (${parsed.regions.length} región/es), ${Math.round(outW)}×${Math.round(outH)} mm`, 'success')
+    },
+
+    clearBaseSvg() {
+      if (this.base.svgBaseId) removeParsedSvg(this.base.svgBaseId)
+      this.base = clampBaseValues({
+        ...this.base,
+        kind: 'rect',
+        width: DEFAULTS.width,
+        height: DEFAULTS.height,
+        svgBaseId: null,
+        svgBaseAspect: null,
+        svgBaseInitialSize: null,
+      })
+      this.setStatus('Base restaurada a rectángulo', 'info')
     },
 
     addDesign(name: string, parsed: ParsedSvg): SvgDesign {
@@ -226,6 +306,19 @@ export const useProjectStore = defineStore('project', {
       design.scaleX = 1
       design.scaleY = 1
       design.rotationDeg = 0
+    },
+
+    resetDesignConfig() {
+      const design = this.selectedDesign
+      if (!design) return
+      design.position = { x: 0, y: 0 }
+      design.scaleX = 1
+      design.scaleY = 1
+      design.rotationDeg = 0
+      design.depth = Math.min(0.2, this.base.thickness)
+      for (const mapping of design.colors) {
+        mapping.assignedColor = mapping.originalColor
+      }
     },
 
     setDepth(value: number) {

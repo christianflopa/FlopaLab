@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { TransformControls } from 'three/addons/controls/TransformControls.js'
 import { useProjectStore } from '../stores/project'
+import { useThemeStore } from '../stores/theme'
 import { createScene } from '../three/scene'
 import { createCamera } from '../three/camera'
 import { createRenderer } from '../three/renderer'
@@ -23,6 +24,7 @@ const COMMIT_DELAY_MS = 120
 const VIEW_DISTANCE = 280
 
 const store = useProjectStore()
+const themeStore = useThemeStore()
 
 const container = ref<HTMLDivElement | null>(null)
 
@@ -49,24 +51,34 @@ function reportEmptyDesigns(emptyDesignIds: string[]) {
   store.setStatus(`El diseño «${names}» queda completamente fuera del separador.`, 'error')
 }
 
-function runCommittedUpdate() {
+async function runCommittedUpdate() {
   if (!bookmarkScene) return
-  const result = bookmarkScene.update(store.base, store.designs, getParsed)
+  // Para SVGs grandes con marco, usar versión async que cede al event loop
+  // y evita "Página no responde" al mandar al diseñador
+  const hasLargeSvg = store.designs.some((d) => {
+    const p = getParsed(d.id)
+    return p ? p.regions.reduce((n, r) => n + (r.polys?.length ?? r.shapes.length), 0) > 20 : false
+  })
+  const result = hasLargeSvg
+    ? await bookmarkScene.updateAsync(store.base, store.designs, getParsed)
+    : bookmarkScene.update(store.base, store.designs, getParsed)
   reportEmptyDesigns(result.emptyDesignIds)
 }
 
 function scheduleCommit() {
   window.clearTimeout(commitTimer)
-  commitTimer = window.setTimeout(runCommittedUpdate, COMMIT_DELAY_MS)
+  commitTimer = window.setTimeout(() => void runCommittedUpdate(), COMMIT_DELAY_MS)
 }
 
 function baseSignature() {
   const hole = store.base.hole
   return [
+    store.base.kind,
     store.base.width,
     store.base.height,
     store.base.thickness,
     store.base.cornerRadius,
+    store.base.silhouette,
     hole.enabled,
     hole.diameter,
     hole.topOffset,
@@ -108,6 +120,13 @@ function idsSignature() {
 
 watch(baseSignature, () => {
   window.clearTimeout(commitTimer)
+  // Durante arrastre del agujero, reconstruir solo el mesh de base en vivo
+  // (barato) y diferrir el re-clip de diseños al soltar (evita lag por mousemove).
+  if (store.holeDragMode) {
+    bookmarkScene?.updateBaseMesh(store.base)
+    scheduleCommit()
+    return
+  }
   runCommittedUpdate()
 })
 
@@ -135,7 +154,27 @@ watch(
 
 watch(
   () => store.transformMode,
-  (mode) => transformControls?.setMode(mode),
+  (mode) => {
+    if (mode === 'hole') return
+    transformControls?.setMode(mode as any)
+  },
+)
+
+watch(
+  () => store.holeDragMode,
+  (enabled) => {
+    if (enabled) {
+      detachGizmo()
+      const holeGroup = bookmarkScene.getHoleHandleGroup()
+      if (holeGroup) {
+        transformControls.setMode('translate')
+        transformControls.attach(holeGroup)
+      }
+    } else {
+      transformControls.detach()
+      attachGizmo()
+    }
+  },
 )
 
 watch(
@@ -153,6 +192,15 @@ watch(
 watch(
   () => store.viewRequest.nonce,
   () => applyView(store.viewRequest.view),
+)
+
+watch(
+  () => themeStore.theme,
+  (theme) => {
+    if (scene) {
+      scene.background = new THREE.Color(theme === 'dark' ? 0x1a1b26 : 0xe8f0ff)
+    }
+  },
 )
 
 function attachGizmo() {
@@ -198,9 +246,30 @@ function syncFromGizmo() {
   // El wrapper ESPEJA la transformación del diseño (la aplica también la
   // escena al reconstruir), así que sus valores absolutos son la verdad.
   // Con escalado uniforme, el arrastre de un eje se replica en vivo al otro.
+  // Fix: usar el eje activo de TransformControls para permitir tanto aumentar
+  // como disminuir. Antes usaba Math.max que impedía disminuir (ej. X=0.5,Y=1 -> max=1).
   if (design.uniformScale && transformControls.mode === 'scale') {
-    const uniform = Math.max(Math.abs(wrapper.scale.x), Math.abs(wrapper.scale.y))
-    wrapper.scale.set(uniform, uniform, 1)
+    const axis: string | null = (transformControls as any).axis ?? null
+    let uniform: number
+    if (axis === 'X') uniform = Math.abs(wrapper.scale.x)
+    else if (axis === 'Y') uniform = Math.abs(wrapper.scale.y)
+    else if (axis === 'Z') uniform = Math.abs(wrapper.scale.z)
+    else {
+      // Para handles de esquina/centro (XY, XYZ) o axis null, usar el que más cambió respecto a 1
+      // y clamp a límites para evitar 0
+      const sx = Math.abs(wrapper.scale.x)
+      const sy = Math.abs(wrapper.scale.y)
+      // Elegir el que está más lejos de 1 (permite tanto crecer como encoger)
+      const dx = Math.abs(sx - 1)
+      const dy = Math.abs(sy - 1)
+      uniform = dx > dy ? sx : sy
+      // Fallback si ambos son 1 (sin cambio) usar max para compatibilidad
+      if (uniform === 1 && sx !== 1) uniform = sx
+      if (uniform === 1 && sy !== 1) uniform = sy
+    }
+    // Clampear al mínimo permitido (1%) para evitar escala 0 por arrastre excesivo
+    const clamped = Math.min(Math.max(uniform, 0.01), 20)
+    wrapper.scale.set(clamped, clamped, 1)
   }
 
   store.setPosition(wrapper.position.x, wrapper.position.y)
@@ -212,10 +281,31 @@ function onDraggingChanged(event: { value: unknown }) {
   orbitControls.enabled = !Boolean(event.value)
 }
 
+function syncHoleFromGizmo() {
+  if (!store.holeDragMode || !transformControls) return
+  const obj = transformControls.object
+  if (!(obj instanceof THREE.Group) || obj.name !== 'holeHandleGroup') return
+  const radius = store.base.hole.diameter / 2
+  const rawX = obj.position.x
+  const rawTopOffset = store.base.height / 2 - obj.position.y - radius
+  // clampHole en el store validará límites automáticamente
+  store.updateBase({
+    hole: { ...store.base.hole, x: rawX, topOffset: rawTopOffset },
+  })
+}
+
+function onObjectChange() {
+  if (store.holeDragMode) {
+    syncHoleFromGizmo()
+  } else {
+    syncFromGizmo()
+  }
+}
+
 onMounted(() => {
   const canvas = container.value!.querySelector('canvas') as HTMLCanvasElement
 
-  scene = createScene().scene
+  scene = createScene(themeStore.theme).scene
 
   camera = createCamera({ position: [150, 170, 150], target: [0, 0.75, 0] })
   renderer = createRenderer(canvas)
@@ -229,12 +319,12 @@ onMounted(() => {
   orbitControls.update()
 
   transformControls = createTransformControls(camera, canvas)
-  transformControls.setMode(store.transformMode)
+  transformControls.setMode(store.transformMode === 'hole' ? 'translate' : (store.transformMode as any))
   transformControls.setSpace('local')
   scene.add(transformControls.getHelper())
 
   transformControls.addEventListener('dragging-changed', onDraggingChanged)
-  transformControls.addEventListener('objectChange', syncFromGizmo)
+  transformControls.addEventListener('objectChange', onObjectChange)
 
   resizeObserver = new ResizeObserver(() => {
     const width = container.value!.clientWidth
@@ -305,6 +395,15 @@ async function tryWorkerExport(kind: '3mf' | 'stl'): Promise<boolean> {
       })
       .filter(Boolean) as any[]
 
+    let baseParsed: any = null
+    if (store.base.kind === 'svg' && store.base.svgBaseId) {
+      const p = getParsed(store.base.svgBaseId)
+      if (p) {
+        const ser = serializeParsedForWorker(p)
+        if (ser) baseParsed = ser
+      }
+    }
+
     const worker = new Worker(new URL('../engine/workers/exportWorker.ts', import.meta.url), {
       type: 'module',
     })
@@ -338,6 +437,7 @@ async function tryWorkerExport(kind: '3mf' | 'stl'): Promise<boolean> {
           base: JSON.parse(JSON.stringify(store.base)),
           designs: JSON.parse(JSON.stringify(store.designs)),
           parsedList,
+          baseParsed,
           kind,
         })
       },

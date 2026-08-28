@@ -7,11 +7,14 @@ import NumberField from './ui/NumberField.vue'
 import CheckboxField from './ui/CheckboxField.vue'
 import ColorField from './ui/ColorField.vue'
 
-const emit = defineEmits<{ 'export-3mf': []; 'export-stl': [] }>()
+const emit = defineEmits<{ 'export-3mf': []; 'export-stl': []; 'open-rasterlab': [] }>()
 
 const store = useProjectStore()
 
 const fileInput = ref<HTMLInputElement | null>(null)
+const baseSvgInput = ref<HTMLInputElement | null>(null)
+const exportFormat = ref<'3mf' | 'stl'>('3mf')
+const showExportDropdown = ref(false)
 
 const selected = computed(() => store.selectedDesign)
 
@@ -25,6 +28,28 @@ function patchHole(patch: Partial<typeof store.base.hole>) {
 
 function openFilePicker() {
   fileInput.value?.click()
+}
+
+function openBaseSvgPicker() {
+  baseSvgInput.value?.click()
+}
+
+async function onBaseSvgSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !/\.svg$/i.test(file.name)) return
+  try {
+    const text = await file.text()
+    const parsed = parseSvgToRegions(text)
+    if (parsed.regions.length === 0) {
+      store.setStatus(`${file.name}: no se encontraron formas rellenas compatibles.`, 'error')
+      return
+    }
+    store.setBaseFromSvg(text, parsed)
+  } catch {
+    store.setStatus(`No se pudo leer ${file.name}.`, 'error')
+  }
 }
 
 async function onFilesSelected(event: Event) {
@@ -62,21 +87,28 @@ function onDepthInput(value: number) {
   store.setDepth(value)
 }
 
-const rotationPresets = [0, 90, 180, 270]
+function selectExportFormat(format: '3mf' | 'stl') {
+  exportFormat.value = format
+  showExportDropdown.value = false
+}
 
-const summaryColors = computed(() => store.uniqueAssignedColors)
+function doExport() {
+  if (exportFormat.value === '3mf') {
+    emit('export-3mf')
+  } else {
+    emit('export-stl')
+  }
+}
+
+const rotationPresets = [0, 90, 180, 270]
 </script>
 
 <template>
   <aside class="sidebar">
     <h1 class="sidebar__title">FlopaLab</h1>
-    <p class="sidebar__hint">
-      Separador de libros 3D · {{ store.base.width }} × {{ store.base.height }} ×
-      {{ store.base.thickness }} mm
-    </p>
 
     <section class="sidebar__section">
-      <h2 class="sidebar__subtitle">1 · Objeto base</h2>
+      <h2 class="sidebar__subtitle">OBJETO BASE</h2>
 
       <NumberField
         label="Ancho"
@@ -110,6 +142,7 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
         unit="mm"
         :step="0.5"
         :min="0"
+        :disabled="store.base.kind === 'svg'"
         :model-value="store.base.cornerRadius"
         @update:model-value="(v) => patchBase({ cornerRadius: v })"
       />
@@ -119,6 +152,16 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
         :model-value="store.base.color"
         @update:model-value="(v) => patchBase({ color: v })"
       />
+
+      <CheckboxField
+        v-if="store.base.kind === 'svg'"
+        label="Silueta"
+        :model-value="store.base.silhouette"
+        @update:model-value="(v) => patchBase({ silhouette: v })"
+      />
+      <p v-if="store.base.kind === 'svg' && store.base.silhouette" class="sidebar__hint">
+        Solo se usa la silueta perimetral del SVG. Todo lo interno se rellena.
+      </p>
 
       <CheckboxField
         label="Agujero superior"
@@ -151,12 +194,33 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
           @update:model-value="(v) => patchHole({ x: v })"
         />
       </template>
+
+      <div class="base-svg-row">
+        <button class="button" @click="openBaseSvgPicker">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -2px; margin-right: 6px">
+            <path d="M12 3v12" />
+            <path d="M8 7l4-4 4 4" />
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          SVG como objeto base
+        </button>
+        <button v-if="store.base.kind === 'svg'" class="button" @click="store.clearBaseSvg()">Rectángulo</button>
+      </div>
+      <input
+        ref="baseSvgInput"
+        type="file"
+        accept=".svg,image/svg+xml"
+        class="sidebar__file-input"
+        @change="onBaseSvgSelected"
+      />
+      <p v-if="store.base.kind === 'svg'" class="sidebar__hint">
+        Forma base SVG activa. El lado más largo se ajusta a 150 mm; ancho y alto mantienen proporción.
+      </p>
     </section>
 
     <section class="sidebar__section">
-      <h2 class="sidebar__subtitle">2 · Diseños</h2>
+      <h2 class="sidebar__subtitle">DISEÑOS</h2>
 
-      <button class="button button--primary" @click="openFilePicker">+ Agregar SVG</button>
       <input
         ref="fileInput"
         type="file"
@@ -166,40 +230,38 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
         @change="onFilesSelected"
       />
 
-      <ul v-if="store.designs.length" class="design-list">
-        <li
-          v-for="design in store.designs"
-          :key="design.id"
-          class="design-list__item"
-          :class="{ 'design-list__item--selected': design.id === store.selectedDesignId }"
-        >
-          <button
-            class="design-list__visibility"
-            :title="design.visible ? 'Ocultar' : 'Mostrar'"
-            @click="store.toggleVisible(design.id)"
+      <template v-if="store.designs.length">
+        <ul class="design-list">
+          <li
+            v-for="design in store.designs"
+            :key="design.id"
+            class="design-list__item"
+            :class="{ 'design-list__item--selected': design.id === store.selectedDesignId }"
           >
-            {{ design.visible ? '◉' : '◌' }}
-          </button>
-          <button class="design-list__name" @click="store.selectDesign(design.id)">
-            {{ design.name }}
-          </button>
-          <button
-            class="design-list__remove"
-            title="Eliminar diseño"
-            @click="store.removeDesign(design.id)"
-          >
-            ×
-          </button>
-        </li>
-      </ul>
-
-      <p v-if="!store.designs.length" class="sidebar__hint">
-        Cargá un SVG para convertirlo en geometría 3D sobre el separador.
-      </p>
+            <button
+              class="design-list__visibility"
+              :title="design.visible ? 'Ocultar' : 'Mostrar'"
+              @click="store.toggleVisible(design.id)"
+            >
+              {{ design.visible ? '◉' : '◌' }}
+            </button>
+            <button class="design-list__name" @click="store.selectDesign(design.id)">
+              {{ design.name }}
+            </button>
+            <button
+              class="design-list__remove"
+              title="Eliminar diseño"
+              @click="store.removeDesign(design.id)"
+            >
+              ×
+            </button>
+          </li>
+        </ul>
+      </template>
 
       <template v-if="selected">
         <div class="subblock">
-          <h3 class="sidebar__subtitle">Transformación</h3>
+          <h3 class="sidebar__subtitle">CONFIGURACIÓN DISEÑO</h3>
 
           <NumberField
             label="Posición X"
@@ -225,7 +287,7 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
             label="Escala X"
             unit="%"
             :step="5"
-            :min="5"
+            :min="1"
             :max="2000"
             :model-value="scalePercent(selected.scaleX)"
             @update:model-value="(v) => onScaleInput('x', v)"
@@ -234,7 +296,7 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
             label="Escala Y"
             unit="%"
             :step="5"
-            :min="5"
+            :min="1"
             :max="2000"
             :disabled="selected.uniformScale"
             :model-value="scalePercent(selected.scaleY)"
@@ -263,16 +325,8 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
             </button>
           </div>
 
-          <button class="button" @click="store.resetDesignTransform()">
-            Restablecer transformación
-          </button>
-        </div>
-
-        <div class="subblock">
-          <h3 class="sidebar__subtitle">Profundidad</h3>
-
           <NumberField
-            label="Profundidad del diseño"
+            label="Profundidad"
             unit="mm"
             :step="0.05"
             :min="0.1"
@@ -282,102 +336,91 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
             @update:model-value="onDepthInput"
           />
 
-          <CheckboxField
-            label="Extender hasta la superficie"
-            :model-value="store.extendsToSurface(selected)"
-            :disabled="true"
-          />
-          <CheckboxField
-            label="Incrustar en la pieza"
-            :model-value="!store.extendsToSurface(selected)"
-            :disabled="true"
-          />
+          <div class="color-section">
+            <div
+              v-for="mapping in selected.colors"
+              :key="mapping.originalColor"
+              class="color-mapping"
+            >
+              <span
+                class="color-mapping__swatch"
+                :style="{ background: mapping.originalColor }"
+                :title="mapping.originalColor"
+              ></span>
+              <span class="color-mapping__original">{{ mapping.originalColor }}</span>
+              <span class="color-mapping__arrow">→</span>
+              <input
+                class="color-mapping__picker"
+                type="color"
+                :value="mapping.assignedColor"
+                @input="
+                  store.setColorMapping(
+                    selected!.id,
+                    mapping.originalColor,
+                    ($event.target as HTMLInputElement).value,
+                  )
+                "
+              />
+            </div>
+          </div>
 
-          <p class="sidebar__hint">
-            Máximo {{ store.base.thickness }} mm (grosor de la pieza). Al ras por la cara frontal;
-            el resto del espesor sigue siendo material base.
-          </p>
+          <button class="button" @click="store.resetDesignConfig()">
+            Restablecer configuración
+          </button>
         </div>
       </template>
-    </section>
 
-    <section class="sidebar__section">
-      <h2 class="sidebar__subtitle">3 · Capas / colores</h2>
-
-      <p v-if="!selected" class="sidebar__hint">Seleccioná un diseño para ver sus colores.</p>
-
-      <template v-else>
-        <div
-          v-for="mapping in selected.colors"
-          :key="mapping.originalColor"
-          class="color-mapping"
-        >
-          <span
-            class="color-mapping__swatch"
-            :style="{ background: mapping.originalColor }"
-            :title="mapping.originalColor"
-          ></span>
-          <span class="color-mapping__original">{{ mapping.originalColor }}</span>
-          <span class="color-mapping__arrow">→</span>
-          <input
-            class="color-mapping__picker"
-            type="color"
-            :value="mapping.assignedColor"
-            @input="
-              store.setColorMapping(
-                selected!.id,
-                mapping.originalColor,
-                ($event.target as HTMLInputElement).value,
-              )
-            "
-          />
-        </div>
-      </template>
+      <button class="button button--primary" @click="openFilePicker">+ Agregar SVG</button>
+      <button class="button" @click="emit('open-rasterlab')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="vertical-align: -2px; margin-right: 6px">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <circle cx="9" cy="9" r="2" />
+          <path d="M21 15l-5-5L5 21" />
+        </svg>
+        Imagen → SVG
+      </button>
     </section>
 
     <section class="sidebar__section sidebar__section--actions">
-      <h2 class="sidebar__subtitle">4 · Exportar</h2>
+      <h2 class="sidebar__subtitle">EXPORTAR</h2>
 
-      <div class="summary">
-        <p class="summary__row">
-          Objeto: {{ store.base.width }} × {{ store.base.height }} ×
-          {{ store.base.thickness }} mm
-        </p>
-        <p class="summary__row">Diseños: {{ store.designs.length }}</p>
-        <p class="summary__row">
-          Profundidad:
-          {{
-            selected
-              ? `${selected.depth} mm (${selected.name})`
-              : '—'
-          }}
-        </p>
-        <div class="summary__colors">
-          <span
-            v-for="color in summaryColors"
-            :key="color"
-            class="summary__chip"
-            :style="{ background: color }"
-            :title="color"
-          ></span>
-          <span v-if="!summaryColors.length" class="sidebar__hint">Sin diseños</span>
+      <div class="export-split-button">
+        <button
+          class="button button--primary export-split-button__action"
+          :disabled="!store.designs.length"
+          @click="doExport"
+        >
+          Exportar
+        </button>
+        <div class="export-split-button__dropdown">
+          <button
+            class="button export-split-button__trigger"
+            :disabled="!store.designs.length"
+            @click="showExportDropdown = !showExportDropdown"
+          >
+            <span>{{ exportFormat === '3mf' ? '3MF' : 'STL' }}</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <div v-if="showExportDropdown" class="export-split-button__menu">
+            <button
+              class="export-split-button__option"
+              :class="{ 'export-split-button__option--active': exportFormat === '3mf' }"
+              @click="selectExportFormat('3mf')"
+            >
+              3MF
+            </button>
+            <button
+              class="export-split-button__option"
+              :class="{ 'export-split-button__option--active': exportFormat === 'stl' }"
+              @click="selectExportFormat('stl')"
+            >
+              STL
+            </button>
+          </div>
         </div>
       </div>
-
-      <button
-        class="button button--primary"
-        :disabled="!store.designs.length"
-        @click="emit('export-3mf')"
-      >
-        Exportar 3MF
-      </button>
-      <button
-        class="button"
-        :disabled="!store.designs.length"
-        @click="emit('export-stl')"
-      >
-        Exportar STL (una pieza por color)
-      </button>
 
       <p
         v-if="store.statusMessage"
@@ -399,14 +442,14 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   height: 100%;
   padding: 1.25rem;
   overflow-y: auto;
-  background: #16161e;
-  border-right: 1px solid #2a2b3d;
+  background: var(--bg-primary);
+  border-right: 1px solid var(--border-color);
 }
 
 .sidebar__title {
   margin: 0;
-  font-size: 1.15rem;
-  color: #c0caf5;
+  font-size: 1.4rem;
+  color: var(--text-primary);
 }
 
 .sidebar__section {
@@ -414,7 +457,7 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   flex-direction: column;
   gap: 0.6rem;
   padding-bottom: 0.9rem;
-  border-bottom: 1px solid #2a2b3d;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .sidebar__section--actions {
@@ -428,28 +471,41 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #7aa2f7;
+  color: var(--accent-primary);
 }
 
 .sidebar__hint {
   margin: 0;
   font-size: 0.75rem;
   line-height: 1.45;
-  color: #565f89;
+  color: var(--text-secondary);
 }
 
 .sidebar__file-input {
   display: none;
 }
 
+.base-svg-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+.base-svg-row .button { flex: 1; }
+
 .subblock {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   padding: 0.6rem;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: #191a24;
+  background: var(--bg-secondary);
+}
+
+.color-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-tertiary);
 }
 
 .design-list {
@@ -467,13 +523,13 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   align-items: center;
   gap: 0.35rem;
   padding: 0.25rem 0.4rem;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 5px;
-  background: #1f2335;
+  background: var(--bg-tertiary);
 }
 
 .design-list__item--selected {
-  border-color: #7aa2f7;
+  border-color: var(--accent-primary);
 }
 
 .design-list__visibility,
@@ -482,22 +538,22 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: #565f89;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.85rem;
 }
 
 .design-list__visibility:hover,
 .design-list__remove:hover {
-  color: #c0caf5;
-  background: #292e42;
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .design-list__name {
   overflow: hidden;
   border: none;
   background: transparent;
-  color: #c0caf5;
+  color: var(--text-primary);
   font-size: 0.78rem;
   text-align: left;
   text-overflow: ellipsis;
@@ -522,18 +578,18 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
 .color-mapping__swatch {
   width: 1.1rem;
   height: 1.1rem;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 4px;
 }
 
 .color-mapping__original {
   font-size: 0.72rem;
-  color: #565f89;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .color-mapping__arrow {
-  color: #565f89;
+  color: var(--text-secondary);
   font-size: 0.75rem;
 }
 
@@ -542,39 +598,10 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
   width: 2.5rem;
   height: 1.6rem;
   padding: 0;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 5px;
   background: transparent;
   cursor: pointer;
-}
-
-.summary {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.55rem 0.6rem;
-  border: 1px solid #2a2b3d;
-  border-radius: 6px;
-  background: #191a24;
-}
-
-.summary__row {
-  margin: 0;
-  font-size: 0.75rem;
-  color: #c0caf5;
-}
-
-.summary__colors {
-  display: flex;
-  gap: 0.3rem;
-  margin-top: 0.2rem;
-}
-
-.summary__chip {
-  width: 1rem;
-  height: 1rem;
-  border: 1px solid #2a2b3d;
-  border-radius: 4px;
 }
 
 .status {
@@ -586,36 +613,36 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
 }
 
 .status--info {
-  border: 1px solid #7aa2f7;
+  border: 1px solid var(--accent-primary);
   background: rgba(122, 162, 247, 0.08);
-  color: #7aa2f7;
+  color: var(--accent-primary);
 }
 
 .status--error {
-  border: 1px solid #f7768e;
+  border: 1px solid var(--accent-error);
   background: rgba(247, 118, 142, 0.08);
-  color: #f7768e;
+  color: var(--accent-error);
 }
 
 .status--success {
-  border: 1px solid #9ece6a;
+  border: 1px solid var(--accent-success);
   background: rgba(158, 206, 106, 0.08);
-  color: #9ece6a;
+  color: var(--accent-success);
 }
 
 .button {
   padding: 0.55rem 0.9rem;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: #1f2335;
-  color: #c0caf5;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.82rem;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .button:hover:not(:disabled) {
-  background: #2a2b3d;
+  background: var(--border-color);
 }
 
 .button:disabled {
@@ -624,14 +651,14 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
 }
 
 .button--primary {
-  background: #7aa2f7;
-  border-color: #7aa2f7;
-  color: #16161e;
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: var(--text-on-primary);
   font-weight: 600;
 }
 
 .button--primary:hover:not(:disabled) {
-  background: #89b4f8;
+  background: var(--accent-primary-hover);
 }
 
 .button--small {
@@ -640,7 +667,84 @@ const summaryColors = computed(() => store.uniqueAssignedColors)
 }
 
 .button--active {
-  border-color: #7aa2f7;
-  color: #7aa2f7;
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.export-split-button {
+  display: flex;
+  gap: 0;
+  width: 100%;
+}
+
+.export-split-button__dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.export-split-button__trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--accent-primary);
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.export-split-button__trigger:hover:not(:disabled) {
+  background: var(--border-color);
+}
+
+.export-split-button__trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.export-split-button__menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  left: 0;
+  margin-bottom: 0.3rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.export-split-button__option {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.export-split-button__option:hover {
+  background: var(--border-color);
+}
+
+.export-split-button__option--active {
+  background: var(--accent-primary);
+  color: var(--text-on-primary);
+  font-weight: 600;
+}
+
+.export-split-button__action {
+  flex: 1;
+  border-radius: 6px 0 0 6px;
 }
 </style>

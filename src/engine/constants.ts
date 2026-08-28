@@ -22,6 +22,6 @@ export const LIMITS = {
   minWall: 1,
   minTopOffset: 0.5,
   maxDepthOverThicknessTolerance: 0.001,
-  minDesignScale: 0.05,
+  minDesignScale: 0.01,
   maxDesignScale: 20,
 } as const

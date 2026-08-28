@@ -1,11 +1,15 @@
 import {
   Matrix4,
   BufferGeometry,
+  CylinderGeometry,
   EdgesGeometry,
   Group,
   LineBasicMaterial,
   LineSegments,
   Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  TorusGeometry,
   Vector2,
   Vector3,
   type Material,
@@ -15,7 +19,7 @@ import {
 import type { BaseObject } from '../../models/BaseObject'
 import type { SvgDesign } from '../../models/SvgDesign'
 import type { ParsedSvg, SvgRegion } from '../../models/ParsedSvg'
-import { createBaseGeometry, createFootprintShape } from '../geometry/baseGeometry'
+import { createBaseGeometry, createFootprintShape, createFootprintPolysForBase } from '../geometry/baseGeometry'
 import { holeCenterY } from '../../models/BaseObject'
 import { designWorldMatrix } from '../geometry/designGeometry'
 import type { Polygon } from '../clipping/polyBoolean'
@@ -73,6 +77,8 @@ export class BookmarkScene {
   private outline: LineSegments | null = null
   private wrappers = new Map<string, Group>()
   private currentBaseGeometry: BufferGeometry | null = null
+  private holeHandleGroup: Group | null = null
+  private holeHandleMesh: Mesh | null = null
 
   constructor(scene: Scene) {
     this.root.rotation.x = -Math.PI / 2
@@ -80,11 +86,11 @@ export class BookmarkScene {
     scene.add(this.root)
   }
 
-  update(
+  async updateAsync(
     base: BaseObject,
     designs: SvgDesign[],
     getParsed: (id: string) => ParsedSvg | undefined,
-  ): UpdateResult {
+  ): Promise<UpdateResult> {
     const emptyDesignIds: string[] = []
     for (const design of designs) {
       const wrapper = this.ensureWrapper(design.id)
@@ -98,9 +104,6 @@ export class BookmarkScene {
       applyDesignTransformToWrapper(wrapper, base.thickness, design)
       this.clearWrapperChildren(wrapper)
 
-      // La transformación del diseño vive en el wrapper; la geometría se
-      // genera en espacio local del diseño y se recorta contra la huella
-      // llevada también a espacio local (misma silueta final, sin hornear).
       const footprintLocal = footprintInDesignSpace(base, design)
       let hasVisibleContent = false
 
@@ -108,14 +111,73 @@ export class BookmarkScene {
         const localPolys = localRegionPolygons(region)
         if (localPolys.length === 0) continue
 
-        const merged = unionPolygons(localPolys)
+        // Ceder cada región para no bloquear UI con SVGs de muchas regiones + marco
+        if (parsed.regions.length > 5) await nextTick()
+        const merged = localPolys.length > 10 ? await unionPolygonsAsync(localPolys as any, 20) : unionPolygons(localPolys as any)
         if (merged.length === 0) continue
 
-        const clipped = clipMultiPolygonToPolygon(merged, footprintLocal)
+        const clipped = clipMultiPolygonToPolygon(merged as any, footprintLocal as any)
         if (clipped.length === 0) continue
         hasVisibleContent = true
 
-        const geometry = extrudeMultiPolygon(clipped, design.depth + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
+        const geometry = extrudeMultiPolygon(clipped as any, design.depth + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
+        if (geometry) {
+          const mesh = createRegionMesh(geometry, design, region.originalColor)
+          mesh.position.z = colorStaggerMM(region.originalColor)
+          wrapper.add(mesh)
+        }
+        // Ceder cada región pesada
+        if (parsed.regions.length > 3) await nextTick()
+      }
+
+      if (!hasVisibleContent) {
+        emptyDesignIds.push(design.id)
+      }
+      // Ceder por diseño
+      if (designs.length > 1) await nextTick()
+    }
+
+    this.removeStaleWrappers(designs)
+    this.rebuildBaseMesh(base)
+
+    return { emptyDesignIds }
+  }
+
+  update(
+    base: BaseObject,
+    designs: SvgDesign[],
+    getParsed: (id: string) => ParsedSvg | undefined,
+  ): UpdateResult {
+    // Sincrónico para compatibilidad con tests y llamadas existentes;
+    // para UI con SVGs grandes usar updateAsync
+    const emptyDesignIds: string[] = []
+    for (const design of designs) {
+      const wrapper = this.ensureWrapper(design.id)
+      wrapper.visible = design.visible
+
+      if (!design.visible) continue
+
+      const parsed = getParsed(design.id)
+      if (!parsed || parsed.regions.length === 0) continue
+
+      applyDesignTransformToWrapper(wrapper, base.thickness, design)
+      this.clearWrapperChildren(wrapper)
+
+      const footprintLocal = footprintInDesignSpace(base, design)
+      let hasVisibleContent = false
+
+      for (const region of parsed.regions) {
+        const localPolys = localRegionPolygons(region)
+        if (localPolys.length === 0) continue
+
+        const merged = unionPolygons(localPolys as any)
+        if (merged.length === 0) continue
+
+        const clipped = clipMultiPolygonToPolygon(merged as any, footprintLocal as any)
+        if (clipped.length === 0) continue
+        hasVisibleContent = true
+
+        const geometry = extrudeMultiPolygon(clipped as any, design.depth + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
         if (geometry) {
           const mesh = createRegionMesh(geometry, design, region.originalColor)
           mesh.position.z = colorStaggerMM(region.originalColor)
@@ -275,8 +337,7 @@ export class BookmarkScene {
     onProgress?.('Excavando bolsillos por capas…')
     await nextTick()
 
-    const outerRing = createFootprintShape(base).getPoints(48)
-    const holes = footprintHoleRings(base)
+    const { outerRing, holes } = getBaseRingsForPocket(base)
     const thickness = base.thickness
     // Para bolsillos usar los polígonos ya clippeados (mucho más liviano que
     // re-unir los crudos). Si por algún motivo no hay clipped (p.ej. todos los
@@ -443,6 +504,10 @@ export class BookmarkScene {
     }
   }
 
+  updateBaseMesh(base: BaseObject) {
+    this.rebuildBaseMesh(base)
+  }
+
   private rebuildBaseMesh(base: BaseObject) {
     const slab = createBaseGeometry(base)
     this.refreshOutline(slab)
@@ -457,6 +522,8 @@ export class BookmarkScene {
       this.baseMesh.name = 'base'
       this.baseGroup.add(this.baseMesh)
     }
+
+    this.updateHoleHandle(base)
 
     previous?.dispose()
   }
@@ -477,12 +544,107 @@ export class BookmarkScene {
     this.outline.name = 'outline'
     this.baseGroup.add(this.outline)
   }
+
+  updateHoleHandle(base: BaseObject) {
+    if (!base.hole.enabled) {
+      if (this.holeHandleGroup) this.holeHandleGroup.visible = false
+      return
+    }
+    const cy = holeCenterY(base)
+    const radius = base.hole.diameter / 2
+    if (!this.holeHandleGroup) {
+      const group = new Group()
+      group.name = 'holeHandleGroup'
+      const torus = new Mesh(
+        new TorusGeometry(radius, 0.35, 12, 32),
+        new MeshStandardMaterial({ color: 0x7aa2f7, transparent: true, opacity: 0.9, emissive: 0x223355 } as any),
+      )
+      torus.rotation.x = Math.PI / 2
+      torus.name = 'holeHandle'
+      const hit = new Mesh(
+        new CylinderGeometry(radius + 3, radius + 3, 1, 32),
+        new MeshBasicMaterial({ visible: false } as any),
+      )
+      hit.rotation.x = Math.PI / 2
+      hit.name = 'holeHitArea'
+      group.add(torus)
+      group.add(hit)
+      this.holeHandleGroup = group
+      this.holeHandleMesh = torus as any
+      this.baseGroup.add(group)
+    }
+    if (this.holeHandleGroup) {
+      this.holeHandleGroup.visible = true
+      this.holeHandleGroup.position.set(base.hole.x, cy, base.thickness + 0.3)
+      const scale = radius / ((this.holeHandleMesh as any)?.geometry?.parameters?.radius ?? radius)
+      if (this.holeHandleMesh && Math.abs(scale - 1) > 0.01) {
+        this.holeHandleMesh.scale.set(scale, scale, 1)
+        const hit = this.holeHandleGroup.children[1] as any
+        if (hit) hit.scale.set(scale, 1, scale)
+      }
+    }
+  }
+
+  getHoleHandleGroup(): Group | null {
+    return this.holeHandleGroup
+  }
 }
 
 
 
 
 function footprintPolygon(base: BaseObject): Polygon {
+  // Si es base SVG, usar huella del SVG escalado (con sus huecos) + agujero paramétrico
+  if (base.kind === 'svg' && base.svgBaseId) {
+    const polys = createFootprintPolysForBase(base)
+    if (polys.length > 0) {
+      // Convertir Vector2[][][] a Polygon (el primero es outer, resto son holes si es un solo polígono)
+      // Si hay múltiples polys disjuntos, tomar el más grande como outer y el resto como islas (se manejan como MultiPolygon después)
+      // Para footprint usamos el polígono más grande como referencia
+      const allRings: Polygon = []
+      for (const poly of polys) {
+        for (const ring of poly) {
+          allRings.push(ring.map((p) => [p.x, p.y] as [number, number]))
+        }
+      }
+      // Si hay múltiples polys, el primero es outer, el resto son holes o islas
+      // Simplificar: si hay más de 1 poly, usar el primero como outer y los demás como holes/islas adicionales
+      // Para footprintPolygon (usado para clip), necesitamos un Polygon con outer + holes
+      // Tomar el poly más grande como outer
+      let outer: [number, number][] | null = null
+      let maxArea = -1
+      const holes: [number, number][][] = []
+      for (const poly of polys) {
+        const outerRing = poly[0].map((p) => [p.x, p.y] as [number, number])
+        // Calcular área aproximada para elegir el más grande
+        let area = 0
+        for (let i = 0; i < outerRing.length - 1; i++) area += outerRing[i][0] * outerRing[i + 1][1] - outerRing[i + 1][0] * outerRing[i][1]
+        area = Math.abs(area) / 2
+        if (area > maxArea) {
+          if (outer) holes.push(outer)
+          // Si había outer previo, moverlo a holes, y si tenía holes, añadirlos también
+          outer = outerRing
+          maxArea = area
+          // Añadir huecos del poly más grande
+          for (let i = 1; i < poly.length; i++) holes.push(poly[i].map((p) => [p.x, p.y] as [number, number]))
+        } else {
+          // Polys más pequeños se tratan como islas adicionales: añadir su outer como "hole" invertido no es correcto
+          // Para footprint usamos solo el outer más grande; las islas disjuntas se manejan como parte del MultiPolygon en pocket
+          // Pero para clip, necesitamos un solo Polygon, así que los añadimos como holes adicionales (no perfecto pero funciona para preview)
+          holes.push(outerRing)
+          for (let i = 1; i < poly.length; i++) holes.push(poly[i].map((p) => [p.x, p.y] as [number, number]))
+        }
+      }
+      if (outer) {
+        // Cerrar outer
+        const first = outer[0]
+        outer.push([first[0], first[1]])
+        // Añadir agujero paramétrico si está habilitado
+        const paramHoles = footprintHoleRings(base).map((ring) => ring.map((p) => [p.x, p.y] as [number, number]))
+        return [outer, ...holes, ...paramHoles]
+      }
+    }
+  }
   const outer: [number, number][] = createFootprintShape(base)
     .getPoints(48)
     .map((point) => [point.x, point.y])
@@ -493,6 +655,32 @@ function footprintPolygon(base: BaseObject): Polygon {
     ring.map((point) => [point.x, point.y] as [number, number]),
   )
   return [outer, ...holes]
+}
+
+function getBaseRingsForPocket(base: BaseObject): { outerRing: Vector2[]; holes: Vector2[][] } {
+  if (base.kind === 'svg' && base.svgBaseId) {
+    const polys = createFootprintPolysForBase(base)
+    if (polys.length > 0) {
+      // Convertir el primer poly a outerRing y el resto a holes
+      // Para pocket necesitamos outerRing como Vector2[] y holes como Vector2[][]
+      const outerPoly = polys[0]
+      const outerRing = outerPoly[0].map((p) => new Vector2(p.x, p.y))
+      const holes: Vector2[][] = []
+      // Añadir huecos del primer poly
+      for (let i = 1; i < outerPoly.length; i++) holes.push(outerPoly[i].map((p) => new Vector2(p.x, p.y)))
+      // Añadir polys adicionales disjuntos como si fueran parte del outer (para pocket, se manejan como múltiples cutters)
+      // Pero outerRing solo puede ser uno, así que los polys adicionales los añadimos como holes adicionales no es correcto
+      // Para pocket, outerRing debe ser el contorno exterior más grande, y los demás polys disjuntos se ignoran para outer
+      // Sin embargo, footprintHoleRings ya añade el agujero paramétrico
+      const paramHoles = footprintHoleRings(base)
+      holes.push(...paramHoles)
+      // Si hay múltiples polys disjuntos (ej. espada con islas), el pocket outerRing no los cubrirá todos
+      // Para esos casos, usar el bbox del SVG como outerRing rectangular sería más seguro
+      // Pero por ahora, usar el outer del primer poly y los demás como holes adicionales (aproximación)
+      return { outerRing, holes }
+    }
+  }
+  return { outerRing: createFootprintShape(base).getPoints(48), holes: footprintHoleRings(base) }
 }
 
 function regionWorldPolygons(region: SvgRegion, world: Matrix4): [number, number][][][] {

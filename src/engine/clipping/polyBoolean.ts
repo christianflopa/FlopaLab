@@ -340,6 +340,37 @@ export function unionPolygons(polygons: Polygon[]): MultiPolygon {
   return cleanMulti(pbUnion(inflated))
 }
 
+/**
+ * Calcula la silueta de un conjunto de polígonos: une todos y devuelve
+ * solo los contornos exteriores (sin huecos internos).
+ * Si hay múltiples polígonos disjuntos, devuelve el de mayor área.
+ */
+export function computeSilhouette(polygons: Polygon[]): Polygon | null {
+  if (polygons.length === 0) return null
+  
+  // Unir todos los polígonos
+  const merged = unionPolygons(polygons)
+  if (merged.length === 0) return null
+  
+  // Si solo hay un polígono, devolver solo su contorno exterior (sin holes)
+  if (merged.length === 1) {
+    return [merged[0][0]]
+  }
+  
+  // Si hay múltiples polígonos disjuntos, tomar el de mayor área
+  let largest: Polygon | null = null
+  let largestArea = -1
+  for (const poly of merged) {
+    const area = Math.abs(ringArea(poly[0]))
+    if (area > largestArea) {
+      largestArea = area
+      largest = [poly[0]]
+    }
+  }
+  
+  return largest
+}
+
 export async function unionPolygonsAsync(
   polygons: Polygon[],
   yieldEvery = 10,

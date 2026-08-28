@@ -50,7 +50,7 @@ function onInput(event: Event) {
 
 .number-field__label {
   font-size: 0.8rem;
-  color: #c0caf5;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -59,10 +59,10 @@ function onInput(event: Event) {
 .number-field__input {
   width: 100%;
   padding: 0.3rem 0.4rem;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 5px;
-  background: #1f2335;
-  color: #c0caf5;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   font-size: 0.8rem;
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -72,7 +72,7 @@ function onInput(event: Event) {
 
 .number-field__input:focus {
   outline: none;
-  border-color: #7aa2f7;
+  border-color: var(--accent-primary);
 }
 
 .number-field__input::-webkit-outer-spin-button,
@@ -87,7 +87,7 @@ function onInput(event: Event) {
 
 .number-field__unit {
   font-size: 0.65rem;
-  color: #565f89;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 </style>

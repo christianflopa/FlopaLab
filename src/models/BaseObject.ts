@@ -7,17 +7,25 @@ export interface HoleConfig {
   x: number
 }
 
+export type BaseKind = 'rect' | 'svg'
+
 export interface BaseObject {
+  kind: BaseKind
   width: number
   height: number
   thickness: number
   cornerRadius: number
   hole: HoleConfig
   color: string
+  svgBaseId: string | null
+  svgBaseAspect: number | null
+  svgBaseInitialSize: { w: number; h: number } | null
+  silhouette: boolean
 }
 
 export function createDefaultBaseObject(): BaseObject {
   return {
+    kind: 'rect',
     width: DEFAULTS.width,
     height: DEFAULTS.height,
     thickness: DEFAULTS.thickness,
@@ -29,6 +37,10 @@ export function createDefaultBaseObject(): BaseObject {
       x: DEFAULTS.holeX,
     },
     color: DEFAULTS.baseColor,
+    svgBaseId: null,
+    svgBaseAspect: null,
+    svgBaseInitialSize: null,
+    silhouette: false,
   }
 }
 
@@ -46,7 +58,19 @@ export function clampBaseValues(base: BaseObject): BaseObject {
 
   const hole = clampHole(base.hole, width, height)
 
-  return { ...base, width, height, thickness, cornerRadius, hole }
+  return { 
+    ...base, 
+    width, 
+    height, 
+    thickness, 
+    cornerRadius, 
+    hole, 
+    kind: base.kind, 
+    svgBaseId: base.svgBaseId ?? null, 
+    svgBaseAspect: base.svgBaseAspect ?? null, 
+    svgBaseInitialSize: base.svgBaseInitialSize ?? null,
+    silhouette: base.silhouette ?? false,
+  }
 }
 
 function clampHole(hole: HoleConfig, width: number, height: number): HoleConfig {

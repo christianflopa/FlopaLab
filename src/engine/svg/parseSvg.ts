@@ -373,6 +373,7 @@ function centerAndFlip(outlines: SampledOutline[]) {
     }
   }
 }
+void centerAndFlip
 
 function toShape(outline: SampledOutline): Shape {
   const contour = outline.contour.slice()

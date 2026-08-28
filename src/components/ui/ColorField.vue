@@ -40,7 +40,7 @@ function onInput(event: Event) {
 
 .color-field__label {
   font-size: 0.8rem;
-  color: #c0caf5;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -48,7 +48,7 @@ function onInput(event: Event) {
 
 .color-field__value {
   font-size: 0.7rem;
-  color: #565f89;
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -56,7 +56,7 @@ function onInput(event: Event) {
   width: 2.5rem;
   height: 1.6rem;
   padding: 0;
-  border: 1px solid #2a2b3d;
+  border: 1px solid var(--border-color);
   border-radius: 5px;
   background: transparent;
   cursor: pointer;

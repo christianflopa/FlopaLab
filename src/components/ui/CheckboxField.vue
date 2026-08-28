@@ -30,7 +30,7 @@ function onChange(event: Event) {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.85rem;
-  color: #c0caf5;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -40,7 +40,7 @@ function onChange(event: Event) {
 }
 
 .checkbox-field input {
-  accent-color: #7aa2f7;
+  accent-color: var(--accent-primary);
 }
 
 .checkbox-field input:disabled {

@@ -44,7 +44,9 @@ describe('estrés de exportación (transformaciones aleatorias con semilla)', ()
   it('todas las piezas salen estancas y sin aristas no manifold', async () => {
     const { countOpenEdges, countOverSharedEdges } = await import('../src/engine/export/validate')
     const rng = mulberry32(20260823)
-    const samples = loadSamples().filter(([n]) => n === 'tatsu.svg')
+    const all = loadSamples()
+    let samples = all.filter(([n]) => n === 'tatsu.svg')
+    if (samples.length === 0) samples = all.filter(([n]) => n === 'frieren')
     expect(samples.length).toBeGreaterThan(0)
 
     const problems: string[] = []

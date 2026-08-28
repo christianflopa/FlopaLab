@@ -10,6 +10,7 @@ import { holeCenterY } from '../../models/BaseObject'
 import { designWorldMatrix } from '../geometry/designGeometry'
 import {
   clipMultiPolygonToPolygon,
+  computeSilhouette,
   decimateShortSegments,
   extrudeMultiPolygon,
   scaleMultiAboutCentroid,
@@ -38,6 +39,7 @@ type WorkerRequest = {
   base: BaseObject
   designs: SvgDesign[]
   parsedList: ParsedForWorker[]
+  baseParsed: ParsedForWorker | null
   kind: '3mf' | 'stl'
 }
 
@@ -60,7 +62,53 @@ function colorStaggerMM(colorHex: string): number {
   return (hash % 5) * COLOR_STAGGER_STEP_MM
 }
 
-function footprintPolygon(base: BaseObject): Polygon {
+function footprintPolygon(base: BaseObject, baseParsed: ParsedForWorker | null): Polygon {
+  if (base.kind === 'svg' && baseParsed) {
+    const scale = Math.min(base.width / baseParsed.width, base.height / baseParsed.height)
+    const allPolys: [number, number][][][] = []
+    for (const region of baseParsed.regions) {
+      for (const poly of region.polys) {
+        allPolys.push(poly.map((ring) => ring.map(([x, y]) => [x * scale, y * scale] as [number, number])))
+      }
+    }
+    if (allPolys.length > 0) {
+      let outer: [number, number][] | null = null
+      const holes: [number, number][][] = []
+      
+      if (base.silhouette) {
+        // Modo silueta: unir todos y tomar solo contorno exterior (sin holes)
+        const silhouette = computeSilhouette(allPolys)
+        if (silhouette) {
+          outer = silhouette[0]
+        }
+      } else {
+        // Modo normal: tomar el polígono más grande como outer, resto como holes
+        let maxArea = -1
+        for (const poly of allPolys) {
+          const outerRing = poly[0]
+          let area = 0
+          for (let i = 0; i < outerRing.length - 1; i++) area += outerRing[i][0] * outerRing[i + 1][1] - outerRing[i + 1][0] * outerRing[i][1]
+          area = Math.abs(area) / 2
+          if (area > maxArea) {
+            if (outer) holes.push(outer)
+            outer = outerRing
+            maxArea = area
+            for (let i = 1; i < poly.length; i++) holes.push(poly[i])
+          } else {
+            holes.push(outerRing)
+            for (let i = 1; i < poly.length; i++) holes.push(poly[i])
+          }
+        }
+      }
+      
+      if (outer) {
+        const first = outer[0]
+        outer.push([first[0], first[1]])
+        const paramHoles = footprintHoleRings(base).map((ring) => ring.map((p) => [p.x, p.y] as [number, number]))
+        return [outer, ...holes, ...paramHoles]
+      }
+    }
+  }
   const outer: [number, number][] = createFootprintShape(base)
     .getPoints(48)
     .map((p) => [p.x, p.y])
@@ -102,14 +150,14 @@ function assignedColorOf(design: SvgDesign, originalColor: string): string {
 }
 
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
-  const { base, designs, parsedList, kind } = e.data
+  const { base, designs, parsedList, baseParsed, kind } = e.data
   const post = (msg: WorkerProgress | WorkerDone | WorkerError) => (self as any).postMessage(msg)
 
   try {
     const getParsed = (id: string) => parsedList.find((p) => p.id === id)
     const warnings: string[] = []
     const parts: SolidPart[] = []
-    const footprint = footprintPolygon(base)
+    const footprint = footprintPolygon(base, baseParsed)
     const polygonsByColor = new Map<string, { depth: number; polygons: Polygon[]; designName: string }>()
 
     // Fase 1: preparar polígonos por color (world)
@@ -194,7 +242,24 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     post({ type: 'progress', stage: 'Excavando bolsillos por capas…' })
     await nextTick()
 
-    const outerRing = createFootprintShape(base).getPoints(48)
+    let outerRing: Vector2[]
+    if (base.kind === 'svg' && baseParsed) {
+      const scale = Math.min(base.width / baseParsed.width, base.height / baseParsed.height)
+      const allPolys: [number, number][][][] = []
+      for (const region of baseParsed.regions) {
+        for (const poly of region.polys) {
+          allPolys.push(poly.map((ring) => ring.map(([x, y]) => [x * scale, y * scale] as [number, number])))
+        }
+      }
+      if (base.silhouette) {
+        const silhouette = computeSilhouette(allPolys)
+        outerRing = silhouette ? silhouette[0].map(([x, y]) => new Vector2(x, y)) : createFootprintShape(base).getPoints(48)
+      } else {
+        outerRing = allPolys[0]?.[0].map(([x, y]) => new Vector2(x, y)) ?? createFootprintShape(base).getPoints(48)
+      }
+    } else {
+      outerRing = createFootprintShape(base).getPoints(48)
+    }
     const holes = footprintHoleRings(base)
     const thickness = base.thickness
     const pocketBuckets = clippedForPocket.size > 0 ? [...clippedForPocket.values()] : [...polygonsByColor.values()].map((b) => ({ depth: b.depth, polygons: b.polygons }))

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useProjectStore } from '../stores/project'
 import { useUiStore } from '../stores/ui'
+import { useThemeStore } from '../stores/theme'
 import { parseSvgToRegions } from '../engine/svg/parseSvg'
 import { setParsedSvg } from '../engine/svg/svgCache'
 import NumberField from './ui/NumberField.vue'
@@ -13,6 +14,7 @@ const emit = defineEmits<{ 'export-3mf': []; 'export-stl': []; 'open-rasterlab':
 
 const store = useProjectStore()
 const uiStore = useUiStore()
+const themeStore = useThemeStore()
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const baseSvgInput = ref<HTMLInputElement | null>(null)
@@ -110,22 +112,46 @@ const rotationPresets = [0, 90, 180, 270]
   <aside class="sidebar" :class="{ 'sidebar--collapsed': collapsed && !mobile, 'sidebar--mobile': mobile, 'sidebar--open': uiStore.sidebarOpen }">
     <div class="sidebar__header">
       <h1 v-if="!collapsed || mobile" class="sidebar__title">FlopaLab</h1>
-      <button v-if="mobile" class="sidebar__close-btn" @click="emit('close')" aria-label="Cerrar menú">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-      <button v-else-if="collapsed" class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Expandir menú" title="Expandir menú">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6"></polyline>
-        </svg>
-      </button>
-      <button v-else class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Colapsar menú" title="Colapsar menú">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="15 18 9 12 15 6"></polyline>
-        </svg>
-      </button>
+      <div class="sidebar__header-actions">
+        <button
+          v-if="!collapsed || mobile"
+          class="sidebar__theme-btn"
+          @click="themeStore.toggleTheme()"
+          :title="themeStore.theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
+          :aria-label="themeStore.theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
+        >
+          <svg v-if="themeStore.theme === 'dark'" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+        </button>
+        <button v-if="mobile" class="sidebar__close-btn" @click="emit('close')" aria-label="Cerrar menú">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+        <button v-else-if="collapsed" class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Expandir menú" title="Expandir menú">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+        <button v-else class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Colapsar menú" title="Colapsar menú">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <template v-if="!collapsed || mobile">
@@ -803,6 +829,30 @@ const rotationPresets = [0, 90, 180, 270]
   min-height: 2rem;
 }
 
+.sidebar__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sidebar__theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sidebar__theme-btn:hover {
+  background: var(--bg-hover);
+}
+
 .sidebar__close-btn,
 .sidebar__toggle-btn {
   display: flex;
@@ -868,6 +918,7 @@ const rotationPresets = [0, 90, 180, 270]
   width: 85%;
   max-width: 320px;
   height: 100vh;
+  height: 100dvh;
   z-index: 1000;
   transform: translateX(-100%);
   transition: transform 0.3s ease;
@@ -886,6 +937,7 @@ const rotationPresets = [0, 90, 180, 270]
     width: 85%;
     max-width: 320px;
     height: 100vh;
+    height: 100dvh;
     z-index: 1000;
     transform: translateX(-100%);
     transition: transform 0.3s ease;
@@ -893,24 +945,18 @@ const rotationPresets = [0, 90, 180, 270]
   }
 
   .export-split-button {
-    flex-direction: column;
+    width: 100%;
   }
 
   .export-split-button__action {
-    border-radius: 6px 6px 0 0;
-    width: 100%;
-  }
-
-  .export-split-button__dropdown {
-    width: 100%;
+    flex: 1;
+    font-size: 0.75rem;
+    padding: 0.45rem 0.6rem;
   }
 
   .export-split-button__trigger {
-    width: 100%;
-    border-radius: 0 0 6px 6px;
-    border-left: 1px solid var(--accent-primary);
-    border-top: none;
-    justify-content: center;
+    font-size: 0.75rem;
+    padding: 0.45rem 0.5rem;
   }
 }
 </style>

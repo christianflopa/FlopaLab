@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useProjectStore } from '../stores/project'
+import { useUiStore } from '../stores/ui'
 import { parseSvgToRegions } from '../engine/svg/parseSvg'
 import { setParsedSvg } from '../engine/svg/svgCache'
 import NumberField from './ui/NumberField.vue'
 import CheckboxField from './ui/CheckboxField.vue'
 import ColorField from './ui/ColorField.vue'
 
-const emit = defineEmits<{ 'export-3mf': []; 'export-stl': []; 'open-rasterlab': [] }>()
+const props = defineProps<{ collapsed?: boolean; mobile?: boolean }>()
+const emit = defineEmits<{ 'export-3mf': []; 'export-stl': []; 'open-rasterlab': []; close: [] }>()
 
 const store = useProjectStore()
+const uiStore = useUiStore()
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const baseSvgInput = ref<HTMLInputElement | null>(null)
@@ -104,9 +107,28 @@ const rotationPresets = [0, 90, 180, 270]
 </script>
 
 <template>
-  <aside class="sidebar">
-    <h1 class="sidebar__title">FlopaLab</h1>
+  <aside class="sidebar" :class="{ 'sidebar--collapsed': collapsed && !mobile, 'sidebar--mobile': mobile, 'sidebar--open': uiStore.sidebarOpen }">
+    <div class="sidebar__header">
+      <h1 v-if="!collapsed || mobile" class="sidebar__title">FlopaLab</h1>
+      <button v-if="mobile" class="sidebar__close-btn" @click="emit('close')" aria-label="Cerrar menú">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+      <button v-else-if="collapsed" class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Expandir menú" title="Expandir menú">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </button>
+      <button v-else class="sidebar__toggle-btn" @click="uiStore.toggleSidebar()" aria-label="Colapsar menú" title="Colapsar menú">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"></polyline>
+        </svg>
+      </button>
+    </div>
 
+    <template v-if="!collapsed || mobile">
     <section class="sidebar__section">
       <h2 class="sidebar__subtitle">OBJETO BASE</h2>
 
@@ -430,6 +452,31 @@ const rotationPresets = [0, 90, 180, 270]
         {{ store.statusMessage }}
       </p>
     </section>
+    </template>
+
+    <template v-else>
+      <div class="sidebar__icons">
+        <button class="sidebar__icon-btn" title="Objeto base" aria-label="Objeto base">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          </svg>
+        </button>
+        <button class="sidebar__icon-btn" title="Diseños" aria-label="Diseños">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </button>
+        <button class="sidebar__icon-btn" title="Exportar" aria-label="Exportar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </button>
+      </div>
+    </template>
   </aside>
 </template>
 
@@ -444,6 +491,7 @@ const rotationPresets = [0, 90, 180, 270]
   overflow-y: auto;
   background: var(--bg-primary);
   border-right: 1px solid var(--border-color);
+  transition: width 0.3s ease, padding 0.3s ease;
 }
 
 .sidebar__title {
@@ -746,5 +794,102 @@ const rotationPresets = [0, 90, 180, 270]
 .export-split-button__action {
   flex: 1;
   border-radius: 6px 0 0 6px;
+}
+
+.sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2rem;
+}
+
+.sidebar__close-btn,
+.sidebar__toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.sidebar__close-btn:hover,
+.sidebar__toggle-btn:hover {
+  background: var(--bg-hover);
+}
+
+.sidebar--collapsed {
+  width: 60px;
+  padding: 0.75rem;
+  align-items: center;
+}
+
+.sidebar--collapsed .sidebar__header {
+  justify-content: center;
+}
+
+.sidebar__icons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.sidebar__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sidebar__icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.sidebar--mobile {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 85%;
+  max-width: 320px;
+  height: 100vh;
+  z-index: 1000;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+}
+
+.sidebar--mobile.sidebar--open {
+  transform: translateX(0);
+}
+
+@media (max-width: 768px) {
+  .sidebar:not(.sidebar--mobile) {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 85%;
+    max-width: 320px;
+    height: 100vh;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
+  }
 }
 </style>

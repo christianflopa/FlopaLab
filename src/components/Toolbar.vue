@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useProjectStore } from '../stores/project'
 import { useThemeStore } from '../stores/theme'
+import { useUiStore } from '../stores/ui'
 
 const store = useProjectStore()
 const themeStore = useThemeStore()
+const uiStore = useUiStore()
 
 const modes = [
   { value: 'translate', label: 'Mover' },
@@ -20,6 +22,14 @@ const views = [
 
 <template>
   <div class="toolbar">
+    <button class="toolbar__menu-btn" @click="uiStore.toggleMobileSidebar()" aria-label="Abrir menú">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+      </svg>
+    </button>
+
     <div class="toolbar__group">
       <button
         v-for="mode in modes"
@@ -155,5 +165,30 @@ const views = [
 
 .toolbar__button--accent:hover:not(:disabled) {
   background: rgba(187, 154, 247, 0.15);
+}
+
+.toolbar__menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.toolbar__menu-btn:hover {
+  background: var(--bg-hover);
+}
+
+@media (max-width: 768px) {
+  .toolbar__menu-btn {
+    display: flex;
+  }
 }
 </style>

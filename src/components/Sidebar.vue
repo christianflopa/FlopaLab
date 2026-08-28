@@ -891,5 +891,26 @@ const rotationPresets = [0, 90, 180, 270]
     transition: transform 0.3s ease;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
   }
+
+  .export-split-button {
+    flex-direction: column;
+  }
+
+  .export-split-button__action {
+    border-radius: 6px 6px 0 0;
+    width: 100%;
+  }
+
+  .export-split-button__dropdown {
+    width: 100%;
+  }
+
+  .export-split-button__trigger {
+    width: 100%;
+    border-radius: 0 0 6px 6px;
+    border-left: 1px solid var(--accent-primary);
+    border-top: none;
+    justify-content: center;
+  }
 }
 </style>

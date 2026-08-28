@@ -72,14 +72,28 @@ const views = [
         class="toolbar__button"
         @click="store.requestView(view.value)"
       >
-        {{ view.label }}
+        <svg v-if="view.value === 'face'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+        </svg>
+        <svg v-else-if="view.value === 'profile'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 12h20M12 2v20"></path>
+        </svg>
+        <svg v-else-if="view.value === 'reset'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+          <path d="M3 3v5h5"></path>
+        </svg>
+        <span class="toolbar__button-text">{{ view.label }}</span>
       </button>
       <button
         class="toolbar__button"
         :class="{ 'toolbar__button--accent': store.previewMode }"
         @click="store.togglePreview()"
       >
-        Vista previa
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+        <span class="toolbar__button-text">Vista previa</span>
       </button>
       <button
         class="toolbar__button"
@@ -189,6 +203,25 @@ const views = [
 @media (max-width: 768px) {
   .toolbar__menu-btn {
     display: flex;
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+    padding: 0.4rem;
+    gap: 0.25rem;
+  }
+
+  .toolbar__group {
+    gap: 0.25rem;
+  }
+
+  .toolbar__button {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .toolbar__button-text {
+    display: none;
   }
 }
 </style>

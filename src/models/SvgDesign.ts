@@ -17,6 +17,7 @@ export interface SvgDesign {
   uniformScale: boolean
   rotationDeg: number
   depth: number
+  protrusion: number
   visible: boolean
   colors: ColorMapping[]
 }

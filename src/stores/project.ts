@@ -10,7 +10,8 @@ import {
 import { removeParsedSvg, setParsedSvg } from '../engine/svg/svgCache'
 
 const EPSILON = 1e-6
-const MIN_DEPTH = 0.1
+const MIN_DEPTH = 0
+const MAX_PROTRUSION = 20
 const FIT_MARGIN_RATIO = 0.92
 
 export type StatusKind = 'info' | 'error' | 'success'
@@ -201,6 +202,7 @@ export const useProjectStore = defineStore('project', {
         uniformScale: true,
         rotationDeg: 0,
         depth: Math.min(0.2, this.base.thickness),
+        protrusion: 0,
         visible: true,
         colors: parsed.regions.map((region) => ({
           originalColor: region.originalColor,
@@ -316,6 +318,7 @@ export const useProjectStore = defineStore('project', {
       design.scaleY = 1
       design.rotationDeg = 0
       design.depth = Math.min(0.2, this.base.thickness)
+      design.protrusion = 0
       for (const mapping of design.colors) {
         mapping.assignedColor = mapping.originalColor
       }
@@ -325,6 +328,12 @@ export const useProjectStore = defineStore('project', {
       const design = this.selectedDesign
       if (!design) return
       design.depth = clampDepth(value, this.base.thickness)
+    },
+
+    setProtrusion(value: number) {
+      const design = this.selectedDesign
+      if (!design) return
+      design.protrusion = Math.min(Math.max(value, 0), MAX_PROTRUSION)
     },
 
     setColorMapping(designId: string, originalColor: string, assignedColor: string) {

@@ -34,6 +34,7 @@ function makeDesign(patch: Partial<SvgDesign> = {}): SvgDesign {
     uniformScale: true,
     rotationDeg: 0,
     depth: 1.5,
+    protrusion: 0,
     visible: true,
     colors: [],
     ...patch,
@@ -205,9 +206,14 @@ describe('build3mfArchive', () => {
     expect(model).toContain('#C0CAF5')
     expect(model).toContain('<triangle')
 
-    expect(model.match(/<item /g)).toHaveLength(1)
-    expect((model.match(/<component /g) ?? []).length).toBe(parts.length)
-    expect(model).toContain('<components>')
+    // Cada pieza es un item independiente en build (sin composite)
+    // Esto permite que los nombres personalizados aparezcan correctamente en el slicer
+    expect(model.match(/<item /g)).toHaveLength(parts.length)
+    expect((model.match(/<component /g) ?? []).length).toBe(0)
+    expect(model).not.toContain('<components>')
+    // Los nombres personalizados están en los objetos
+    expect(model).toContain('name="Base"')
+    expect(model).toContain('name="diseno_FFFFFF"')
   })
 })
 
@@ -235,6 +241,7 @@ describe('buildExportModel: bolsillo parcial', () => {
       uniformScale: true,
       rotationDeg: 0,
       depth: 0.4,
+      protrusion: 0,
       visible: true,
       colors: [],
     }
@@ -295,12 +302,12 @@ describe('buildExportModel: bolsillo parcial', () => {
     expect(actualBase).toBeCloseTo(expectedBase, 0)
 
     // diseño a tamaño real (fiel al SVG; el bolsillo es quien crece 0.2%),
-    // se hunde 0.08mm en el fondo y sobresale 0.02mm
+    // se hunde 0.02mm en el fondo y sobresale 0.02mm
     const designArea = side * side
     const designVolume = volumeOf(designPart!.geometry)
     // el escalonado anti-coplanaridad por color añade hasta 0.016mm de altura
-    expect(designVolume).toBeGreaterThanOrEqual(designArea * (0.4 + 0.08 + 0.02))
-    expect(designVolume).toBeLessThanOrEqual(designArea * (0.4 + 0.08 + 0.02 + 0.016) + 1)
+    expect(designVolume).toBeGreaterThanOrEqual(designArea * (0.4 + 0.02 + 0.02))
+    expect(designVolume).toBeLessThanOrEqual(designArea * (0.4 + 0.02 + 0.02 + 0.016) + 1)
 
     // fidelidad: la huella del diseño coincide con el cuadrado original (sin engordar)
     designPart!.geometry.computeBoundingBox()
@@ -342,6 +349,7 @@ describe('buildExportModel: colores vecinos que comparten borde', () => {
       uniformScale: true,
       rotationDeg: 0,
       depth: 0.4,
+      protrusion: 0,
       visible: true,
       colors: [],
     }

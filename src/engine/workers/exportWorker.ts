@@ -26,6 +26,7 @@ import type { SvgDesign } from '../../models/SvgDesign'
 import type { Polygon } from '../clipping/polyBoolean'
 import type { SolidPart } from '../export/validate'
 import { Vector2, Vector3, Matrix4 } from 'three'
+import { computeBorderRing, borderRingToPolygon } from '../geometry/borderGeometry'
 
 type ParsedForWorker = {
   id: string
@@ -52,7 +53,7 @@ function nextTick() {
 }
 
 const DESIGN_LIFT_MM = 0.02
-const DESIGN_EMBED_MM = 0.08
+const DESIGN_EMBED_MM = 0.02
 const POCKET_CLEARANCE_RATIO = 1.002
 const COLOR_STAGGER_STEP_MM = 0.004
 
@@ -158,7 +159,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     const warnings: string[] = []
     const parts: SolidPart[] = []
     const footprint = footprintPolygon(base, baseParsed)
-    const polygonsByColor = new Map<string, { depth: number; polygons: Polygon[]; designName: string }>()
+    const polygonsByColor = new Map<string, { depth: number; protrusion: number; polygons: Polygon[]; designName: string }>()
 
     // Fase 1: preparar polígonos por color (world)
     for (const design of designs) {
@@ -179,11 +180,26 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           }
           const key = `${design.id}|${assigned}`
           let bucket = polygonsByColor.get(key)
-          if (!bucket) bucket = { depth: design.depth, polygons: [], designName: design.name }
+          if (!bucket) bucket = { depth: design.depth, protrusion: design.protrusion, polygons: [], designName: design.name }
           bucket.polygons.push(poly as any)
           // keep map updated
           polygonsByColor.set(key, bucket)
         }
+      }
+    }
+
+    // Agregar borde si esta habilitado y tiene volumen (depth > 0 o protrusion > 0)
+    if (base.border.enabled && (base.border.depth > 0.01 || base.border.protrusion > 0.01)) {
+      const borderRing = computeBorderRing(base)
+      if (borderRing) {
+        const borderPoly = borderRingToPolygon(borderRing)
+        const borderKey = `__border__|${base.border.color}`
+        polygonsByColor.set(borderKey, {
+          depth: base.border.depth,
+          protrusion: base.border.protrusion,
+          polygons: [borderPoly],
+          designName: 'Borde',
+        })
       }
     }
 
@@ -205,7 +221,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       designBucketCounts.set(did, (designBucketCounts.get(did) ?? 0) + 1)
     }
     const designBucketSeq = new Map<string, number>()
-    const clippedForPocket = new Map<string, { depth: number; polygons: Polygon[] }>()
+    const clippedForPocket = new Map<string, { depth: number; protrusion: number; polygons: Polygon[] }>()
     let bucketIdx = 0
     const totalBuckets = polygonsByColor.size
     const lift = DESIGN_LIFT_MM
@@ -219,22 +235,27 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       const merged = bucket.polygons.length > 100 ? await unionPolygonsAsync(bucket.polygons, 20) : unionPolygons(bucket.polygons)
       await nextTick()
       if (merged.length === 0) continue
-      const finalClipped = clipMultiPolygonToPolygon(merged, footprint)
+      const designId = key.split('|')[0] ?? ''
+      // El borde no se recorta contra el footprint porque ya está calculado para estar dentro
+      const finalClipped = designId === '__border__' ? merged : clipMultiPolygonToPolygon(merged, footprint)
       await nextTick()
       if (finalClipped.length === 0) continue
-      clippedForPocket.set(key, { depth: bucket.depth, polygons: finalClipped })
+      clippedForPocket.set(key, { depth: bucket.depth, protrusion: bucket.protrusion, polygons: finalClipped })
       const zOffset = Math.max(0, base.thickness - bucket.depth - DESIGN_EMBED_MM)
-      const geom = extrudeMultiPolygon(finalClipped, bucket.depth + DESIGN_EMBED_MM + lift + colorStaggerMM(assigned), zOffset)
+      const geom = extrudeMultiPolygon(finalClipped, bucket.depth + bucket.protrusion + DESIGN_EMBED_MM + lift + colorStaggerMM(assigned), zOffset)
       if (!geom) continue
-      const designId = key.split('|')[0] ?? ''
-      const designIdx = designIdToIndex.get(designId) ?? 1
-      const totalForDesign = designBucketCounts.get(designId) ?? 1
       let partName: string
-      if (totalForDesign === 1) partName = `Diseño_${designIdx}`
-      else {
-        const seq = (designBucketSeq.get(designId) ?? 0) + 1
-        designBucketSeq.set(designId, seq)
-        partName = `Diseño_${designIdx}_${seq}`
+      if (designId === '__border__') {
+        partName = 'Borde'
+      } else {
+        const designIdx = designIdToIndex.get(designId) ?? 1
+        const totalForDesign = designBucketCounts.get(designId) ?? 1
+        if (totalForDesign === 1) partName = `Diseño_${designIdx}`
+        else {
+          const seq = (designBucketSeq.get(designId) ?? 0) + 1
+          designBucketSeq.set(designId, seq)
+          partName = `Diseño_${designIdx}_${seq}`
+        }
       }
       parts.push({ name: partName, colorHex: assigned, geometry: geom as any })
     }
@@ -262,7 +283,9 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
     }
     const holes = footprintHoleRings(base)
     const thickness = base.thickness
-    const pocketBuckets = clippedForPocket.size > 0 ? [...clippedForPocket.values()] : [...polygonsByColor.values()].map((b) => ({ depth: b.depth, polygons: b.polygons }))
+    // Filtrar buckets con depth > 0.01 para evitar geometrías degeneradas
+    // cuando depth=0 (diseño superficial sin hundimiento).
+    const pocketBuckets = clippedForPocket.size > 0 ? [...clippedForPocket.values()].filter((b) => b.depth > 0.01) : [...polygonsByColor.values()].filter((b) => b.depth > 0.01).map((b) => ({ depth: b.depth, protrusion: b.protrusion, polygons: b.polygons }))
     const depths = [...new Set(pocketBuckets.map((b) => Math.min(b.depth, thickness)))].sort((a, b) => a - b)
 
     if (depths.length === 0) {

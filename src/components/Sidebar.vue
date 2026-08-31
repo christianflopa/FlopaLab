@@ -23,6 +23,10 @@ const showExportDropdown = ref(false)
 
 const selected = computed(() => store.selectedDesign)
 
+const maxBorderWidth = computed(() => {
+  return Math.min(store.base.width, store.base.height) / 2 - 1
+})
+
 function patchBase(patch: Parameters<typeof store.updateBase>[0]) {
   store.updateBase(patch)
 }
@@ -90,6 +94,10 @@ function onScaleInput(axis: 'x' | 'y', value: number) {
 
 function onDepthInput(value: number) {
   store.setDepth(value)
+}
+
+function onProtrusionInput(value: number) {
+  store.setProtrusion(value)
 }
 
 function selectExportFormat(format: '3mf' | 'stl') {
@@ -267,6 +275,51 @@ const rotationPresets = [0, 90, 180, 270]
     </section>
 
     <section class="sidebar__section">
+      <h2 class="sidebar__subtitle">BORDE</h2>
+
+      <CheckboxField
+        label="Añadir borde"
+        :model-value="store.base.border.enabled"
+        @update:model-value="(v) => patchBase({ border: { ...store.base.border, enabled: v } })"
+      />
+
+      <template v-if="store.base.border.enabled">
+        <NumberField
+          label="Grosor"
+          unit="mm"
+          :step="0.5"
+          :min="0.5"
+          :max="maxBorderWidth"
+          :model-value="store.base.border.width"
+          @update:model-value="(v) => patchBase({ border: { ...store.base.border, width: v } })"
+        />
+        <NumberField
+          label="Profundidad"
+          unit="mm"
+          :step="0.05"
+          :min="0"
+          :max="store.base.thickness"
+          :model-value="store.base.border.depth"
+          @update:model-value="(v) => patchBase({ border: { ...store.base.border, depth: v } })"
+        />
+        <NumberField
+          label="Sobresalir"
+          unit="mm"
+          :step="0.1"
+          :min="0"
+          :max="20"
+          :model-value="store.base.border.protrusion"
+          @update:model-value="(v) => patchBase({ border: { ...store.base.border, protrusion: v } })"
+        />
+        <ColorField
+          label="Color del borde"
+          :model-value="store.base.border.color"
+          @update:model-value="(v) => patchBase({ border: { ...store.base.border, color: v } })"
+        />
+      </template>
+    </section>
+
+    <section class="sidebar__section">
       <h2 class="sidebar__subtitle">DISEÑOS</h2>
 
       <input
@@ -377,11 +430,20 @@ const rotationPresets = [0, 90, 180, 270]
             label="Profundidad"
             unit="mm"
             :step="0.05"
-            :min="0.1"
+            :min="0"
             :max="store.base.thickness"
             :disabled="store.extendsToSurface(selected)"
             :model-value="selected.depth"
             @update:model-value="onDepthInput"
+          />
+          <NumberField
+            label="Sobresalir"
+            unit="mm"
+            :step="0.1"
+            :min="0"
+            :max="20"
+            :model-value="selected.protrusion"
+            @update:model-value="onProtrusionInput"
           />
 
           <div class="color-section">

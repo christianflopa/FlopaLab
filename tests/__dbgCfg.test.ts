@@ -106,6 +106,7 @@ it('disecar cfg0', async () => {
     uniformScale: true,
     rotationDeg: rot,
     depth,
+    protrusion: 0,
     visible: true,
     colors: [],
   }

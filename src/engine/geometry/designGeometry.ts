@@ -61,7 +61,7 @@ function disposeEntry(entry: DesignGeometryCacheEntry) {
 
 export function designWorldMatrix(design: SvgDesign, thickness: number): Matrix4 {
   return new Matrix4().compose(
-    new Vector3(design.position.x, design.position.y, Math.max(0, thickness - design.depth)),
+    new Vector3(design.position.x, design.position.y, Math.max(0, thickness - design.depth) + design.protrusion),
     new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), (design.rotationDeg * Math.PI) / 180),
     new Vector3(design.scaleX, design.scaleY, 1),
   )

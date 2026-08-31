@@ -20,7 +20,7 @@ const parsed = parseSvgToRegions(svgText)
 const base = createDefaultBaseObject()
 const design = {
   id: 'frieren', name: 'frieren', position: { x: 0, y: 0 }, scaleX: 1, scaleY: 1,
-  uniformScale: true, rotationDeg: 0, depth: 0.4, visible: true, colors: [],
+  uniformScale: true, rotationDeg: 0, depth: 0.4, protrusion: 0, visible: true, colors: [],
 }
 
 it('interacción sin CSG: frío acotado y caliente rápido', () => {

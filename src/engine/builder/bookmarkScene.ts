@@ -34,6 +34,7 @@ import {
 } from '../clipping/polyBoolean'
 import { getBaseMaterial, getDesignMaterial } from '../materials/materialRegistry'
 import type { SolidPart } from '../export/validate'
+import { computeBorderRing, borderRingToPolygon } from '../geometry/borderGeometry'
 
 export interface UpdateResult {
   emptyDesignIds: string[]
@@ -53,7 +54,7 @@ function nextTick() {
 }
 
 const DESIGN_LIFT_MM = 0.02
-const DESIGN_EMBED_MM = 0.08
+const DESIGN_EMBED_MM = 0.02
 // Holgura de impresión: SOLO el cortador del bolsillo se agranda este ratio
 // para que el diseño entre sin fricción. El arte visible/exportado queda a
 // tamaño real, fiel al SVG original.
@@ -71,9 +72,11 @@ function colorStaggerMM(colorHex: string): number {
 export class BookmarkScene {
   readonly root = new Group()
   readonly baseGroup = new Group()
+  readonly borderGroup = new Group()
   readonly designsGroup = new Group()
 
   private baseMesh: Mesh | null = null
+  private borderMesh: Mesh | null = null
   private outline: LineSegments | null = null
   private wrappers = new Map<string, Group>()
   private currentBaseGeometry: BufferGeometry | null = null
@@ -82,7 +85,7 @@ export class BookmarkScene {
 
   constructor(scene: Scene) {
     this.root.rotation.x = -Math.PI / 2
-    this.root.add(this.baseGroup, this.designsGroup)
+    this.root.add(this.baseGroup, this.borderGroup, this.designsGroup)
     scene.add(this.root)
   }
 
@@ -120,7 +123,7 @@ export class BookmarkScene {
         if (clipped.length === 0) continue
         hasVisibleContent = true
 
-        const geometry = extrudeMultiPolygon(clipped as any, design.depth + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
+        const geometry = extrudeMultiPolygon(clipped as any, design.depth + design.protrusion + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
         if (geometry) {
           const mesh = createRegionMesh(geometry, design, region.originalColor)
           mesh.position.z = colorStaggerMM(region.originalColor)
@@ -139,6 +142,7 @@ export class BookmarkScene {
 
     this.removeStaleWrappers(designs)
     this.rebuildBaseMesh(base)
+    this.rebuildBorderMesh(base)
 
     return { emptyDesignIds }
   }
@@ -177,7 +181,7 @@ export class BookmarkScene {
         if (clipped.length === 0) continue
         hasVisibleContent = true
 
-        const geometry = extrudeMultiPolygon(clipped as any, design.depth + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
+        const geometry = extrudeMultiPolygon(clipped as any, design.depth + design.protrusion + DESIGN_EMBED_MM, -DESIGN_EMBED_MM)
         if (geometry) {
           const mesh = createRegionMesh(geometry, design, region.originalColor)
           mesh.position.z = colorStaggerMM(region.originalColor)
@@ -192,6 +196,7 @@ export class BookmarkScene {
 
     this.removeStaleWrappers(designs)
     this.rebuildBaseMesh(base)
+    this.rebuildBorderMesh(base)
 
     return { emptyDesignIds }
   }
@@ -207,7 +212,7 @@ export class BookmarkScene {
     const footprint = footprintPolygon(base)
     const polygonsByColor = new Map<
       string,
-      { depth: number; polygons: [number, number][][][]; designName: string }
+      { depth: number; protrusion: number; polygons: [number, number][][][]; designName: string }
     >()
 
 
@@ -235,11 +240,26 @@ export class BookmarkScene {
           const key = `${design.id}|${assigned}`
           let bucket = polygonsByColor.get(key)
           if (!bucket) {
-            bucket = { depth: design.depth, polygons: [], designName: design.name }
+            bucket = { depth: design.depth, protrusion: design.protrusion, polygons: [], designName: design.name }
             polygonsByColor.set(key, bucket)
           }
           bucket.polygons.push(poly)
         }
+      }
+    }
+
+    // Agregar borde si esta habilitado y tiene volumen (depth > 0 o protrusion > 0)
+    if (base.border.enabled && (base.border.depth > 0.01 || base.border.protrusion > 0.01)) {
+      const borderRing = computeBorderRing(base)
+      if (borderRing) {
+        const borderPoly = borderRingToPolygon(borderRing)
+        const borderKey = `__border__|${base.border.color}`
+        polygonsByColor.set(borderKey, {
+          depth: base.border.depth,
+          protrusion: base.border.protrusion,
+          polygons: [borderPoly],
+          designName: 'Borde',
+        })
       }
     }
 
@@ -284,7 +304,7 @@ export class BookmarkScene {
     // "Excavando bolsillos por capas…" (visto con 2× frieren 181 shapes →
     // ~2.8s sólo en el union del pocket). Reusar finalClipped reduce el
     // trabajo a 1 polígono por bucket (ya unionado y clippeado).
-    const clippedForPocket = new Map<string, { depth: number; polygons: Polygon[] }>()
+    const clippedForPocket = new Map<string, { depth: number; protrusion: number; polygons: Polygon[] }>()
     let bucketIdx = 0
     const totalBuckets = polygonsByColor.size
     for (const [key, bucket] of polygonsByColor) {
@@ -304,28 +324,33 @@ export class BookmarkScene {
           : unionPolygons(bucket.polygons)
       await nextTick()
       if (merged.length === 0) continue
-      const finalClipped = clipMultiPolygonToPolygon(merged, footprint)
+      const designId = key.split('|')[0] ?? ''
+      // El borde no se recorta contra el footprint porque ya está calculado para estar dentro
+      const finalClipped = designId === '__border__' ? merged : clipMultiPolygonToPolygon(merged, footprint)
       await nextTick()
       if (finalClipped.length === 0) continue
       // Guardar para pocket (bolsillo) – ya está dentro de la huella
-      clippedForPocket.set(key, { depth: bucket.depth, polygons: finalClipped })
+      clippedForPocket.set(key, { depth: bucket.depth, protrusion: bucket.protrusion, polygons: finalClipped })
       const zOffset = Math.max(0, base.thickness - bucket.depth - DESIGN_EMBED_MM)
       const geometry = extrudeMultiPolygon(
         finalClipped,
-        bucket.depth + DESIGN_EMBED_MM + lift + colorStaggerMM(assigned),
+        bucket.depth + bucket.protrusion + DESIGN_EMBED_MM + lift + colorStaggerMM(assigned),
         zOffset,
       )
       if (!geometry) continue
-      const designId = key.split('|')[0] ?? ''
-      const designIdx = designIdToIndex.get(designId) ?? 1
-      const totalForDesign = designBucketCounts.get(designId) ?? 1
       let partName: string
-      if (totalForDesign === 1) {
-        partName = `Diseño_${designIdx}`
+      if (designId === '__border__') {
+        partName = 'Borde'
       } else {
-        const seq = (designBucketSeq.get(designId) ?? 0) + 1
-        designBucketSeq.set(designId, seq)
-        partName = `Diseño_${designIdx}_${seq}`
+        const designIdx = designIdToIndex.get(designId) ?? 1
+        const totalForDesign = designBucketCounts.get(designId) ?? 1
+        if (totalForDesign === 1) {
+          partName = `Diseño_${designIdx}`
+        } else {
+          const seq = (designBucketSeq.get(designId) ?? 0) + 1
+          designBucketSeq.set(designId, seq)
+          partName = `Diseño_${designIdx}_${seq}`
+        }
       }
       parts.push({
         name: partName,
@@ -342,9 +367,11 @@ export class BookmarkScene {
     // Para bolsillos usar los polígonos ya clippeados (mucho más liviano que
     // re-unir los crudos). Si por algún motivo no hay clipped (p.ej. todos los
     // diseños fuera de huella), fallback a los polígonos crudos.
+    // Filtrar buckets con depth > 0.01 para evitar geometrías degeneradas
+    // cuando depth=0 (diseño superficial sin hundimiento).
     const pocketBuckets = clippedForPocket.size > 0
-      ? [...clippedForPocket.values()]
-      : [...polygonsByColor.values()].map((b) => ({ depth: b.depth, polygons: b.polygons }))
+      ? [...clippedForPocket.values()].filter((b) => b.depth > 0.01)
+      : [...polygonsByColor.values()].filter((b) => b.depth > 0.01).map((b) => ({ depth: b.depth, protrusion: b.protrusion, polygons: b.polygons }))
 
     const depths = [
       ...new Set(pocketBuckets.map((bucket) => Math.min(bucket.depth, thickness))),
@@ -463,6 +490,7 @@ export class BookmarkScene {
     }
     this.wrappers.clear()
     this.currentBaseGeometry?.dispose()
+    this.borderMesh?.geometry.dispose()
     this.outline?.geometry.dispose()
     ;(this.outline?.material as Material | undefined)?.dispose()
       this.root.clear()
@@ -526,6 +554,38 @@ export class BookmarkScene {
     this.updateHoleHandle(base)
 
     previous?.dispose()
+  }
+
+  private rebuildBorderMesh(base: BaseObject) {
+    const borderRing = computeBorderRing(base)
+    if (!borderRing || !base.border.enabled) {
+      this.borderGroup.visible = false
+      return
+    }
+
+    this.borderGroup.visible = true
+    const polygon = borderRingToPolygon(borderRing)
+    const totalHeight = base.border.depth + base.border.protrusion + DESIGN_EMBED_MM
+    const zOffset = -DESIGN_EMBED_MM
+    const geometry = extrudeMultiPolygon([polygon], totalHeight, zOffset)
+
+    if (!geometry) {
+      this.borderGroup.visible = false
+      return
+    }
+
+    const z = Math.max(0, base.thickness - base.border.depth) + base.border.protrusion + DESIGN_LIFT_MM
+    this.borderGroup.position.set(0, 0, z)
+
+    if (this.borderMesh) {
+      this.borderMesh.geometry.dispose()
+      this.borderMesh.geometry = geometry
+      this.borderMesh.material = getDesignMaterial(base.border.color)
+    } else {
+      this.borderMesh = new Mesh(geometry, getDesignMaterial(base.border.color))
+      this.borderMesh.name = 'border'
+      this.borderGroup.add(this.borderMesh)
+    }
   }
 
   private refreshOutline(slab: BufferGeometry) {
@@ -764,7 +824,7 @@ function applyDesignTransformToWrapper(wrapper: Group, thickness: number, design
   wrapper.position.set(
     design.position.x,
     design.position.y,
-    Math.max(0, thickness - design.depth) + DESIGN_LIFT_MM,
+    Math.max(0, thickness - design.depth) + design.protrusion + DESIGN_LIFT_MM,
   )
   wrapper.quaternion.setFromAxisAngle(
     new Vector3(0, 0, 1),

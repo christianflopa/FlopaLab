@@ -33,6 +33,7 @@ function makeDesign(depth: number): SvgDesign {
     uniformScale: true,
     rotationDeg: 0,
     depth,
+    protrusion: 0,
     visible: true,
     colors: [],
   }

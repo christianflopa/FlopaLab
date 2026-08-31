@@ -73,6 +73,7 @@ describe('estrés de exportación (transformaciones aleatorias con semilla)', ()
           uniformScale: true,
           rotationDeg: rng() * 45,
           depth: Math.min(0.25 + rng() * 0.65, base.thickness),
+          protrusion: 0,
           visible: true,
           colors: [],
         }

@@ -8,6 +8,11 @@ export const DEFAULTS = {
   holeTopOffset: 5,
   holeX: 0,
   baseColor: '#FFFFFF',
+  borderEnabled: false,
+  borderWidth: 2,
+  borderDepth: 0.2,
+  borderProtrusion: 0,
+  borderColor: '#000000',
 } as const
 
 export const LIMITS = {
@@ -24,4 +29,7 @@ export const LIMITS = {
   maxDepthOverThicknessTolerance: 0.001,
   minDesignScale: 0.01,
   maxDesignScale: 20,
+  minBorderWidth: 0.5,
+  minBorderDepth: 0,
+  maxProtrusion: 20,
 } as const

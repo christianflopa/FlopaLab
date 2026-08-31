@@ -7,6 +7,14 @@ export interface HoleConfig {
   x: number
 }
 
+export interface BorderConfig {
+  enabled: boolean
+  width: number
+  depth: number
+  protrusion: number
+  color: string
+}
+
 export type BaseKind = 'rect' | 'svg'
 
 export interface BaseObject {
@@ -21,6 +29,7 @@ export interface BaseObject {
   svgBaseAspect: number | null
   svgBaseInitialSize: { w: number; h: number } | null
   silhouette: boolean
+  border: BorderConfig
 }
 
 export function createDefaultBaseObject(): BaseObject {
@@ -41,6 +50,13 @@ export function createDefaultBaseObject(): BaseObject {
     svgBaseAspect: null,
     svgBaseInitialSize: null,
     silhouette: false,
+    border: {
+      enabled: DEFAULTS.borderEnabled,
+      width: DEFAULTS.borderWidth,
+      depth: DEFAULTS.borderDepth,
+      protrusion: DEFAULTS.borderProtrusion,
+      color: DEFAULTS.borderColor,
+    },
   }
 }
 
@@ -57,6 +73,7 @@ export function clampBaseValues(base: BaseObject): BaseObject {
   const cornerRadius = clamp(base.cornerRadius, 0, maxRadius)
 
   const hole = clampHole(base.hole, width, height)
+  const border = clampBorder(base.border, width, height, thickness)
 
   return { 
     ...base, 
@@ -70,6 +87,7 @@ export function clampBaseValues(base: BaseObject): BaseObject {
     svgBaseAspect: base.svgBaseAspect ?? null, 
     svgBaseInitialSize: base.svgBaseInitialSize ?? null,
     silhouette: base.silhouette ?? false,
+    border,
   }
 }
 
@@ -85,6 +103,17 @@ function clampHole(hole: HoleConfig, width: number, height: number): HoleConfig 
   const maxTopOffset = height / 2 - radius - LIMITS.minWall
   const topOffset = clamp(hole.topOffset, LIMITS.minTopOffset, maxTopOffset)
   return { ...hole, diameter, x, topOffset }
+}
+
+function clampBorder(border: BorderConfig, width: number, height: number, thickness: number): BorderConfig {
+  const maxBorderWidth = Math.min(width, height) / 2 - LIMITS.minWall
+  return {
+    enabled: border.enabled,
+    width: clamp(border.width, LIMITS.minBorderWidth, Math.max(LIMITS.minBorderWidth, maxBorderWidth)),
+    depth: clamp(border.depth, LIMITS.minBorderDepth, thickness),
+    protrusion: clamp(border.protrusion, 0, LIMITS.maxProtrusion),
+    color: border.color,
+  }
 }
 
 export function holeCenterY(base: BaseObject): number {

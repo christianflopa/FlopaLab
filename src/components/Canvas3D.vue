@@ -72,6 +72,7 @@ function scheduleCommit() {
 
 function baseSignature() {
   const hole = store.base.hole
+  const border = store.base.border
   return [
     store.base.kind,
     store.base.width,
@@ -83,6 +84,11 @@ function baseSignature() {
     hole.diameter,
     hole.topOffset,
     hole.x,
+    border.enabled,
+    border.width,
+    border.depth,
+    border.protrusion,
+    border.color,
   ].join('|')
 }
 
@@ -97,6 +103,7 @@ function transformSignature() {
         design.scaleY,
         design.rotationDeg,
         design.depth,
+        design.protrusion,
       ].join(','),
     )
     .join(';')
